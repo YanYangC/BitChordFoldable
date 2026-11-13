@@ -275,7 +275,7 @@ internal fun rememberAutoMixCanvasPair(
                             // An incoming Spotify Canvas reveals as its cover; the ordinary
                             // selected-track path brings the clip in once the mix has promoted.
                             ?.takeUnless { it.retiresBeforeAutoMix }
-                            ?.nowPlayingRendition(fullWindow) ?: return@launch
+                            ?.nowPlayingRendition(fullWindow && fullBleed) ?: return@launch
                         if (sealed || active !== tracks || !tracks.beforeIncomingDeadline(feed.value)) return@launch
                         tracks.incomingClip = tracks.pinnedClip?.takeIf { it.url == clip.url } ?: clip
                         if (clip.url == tracks.pinnedClip?.url) tracks.incomingReady = true
