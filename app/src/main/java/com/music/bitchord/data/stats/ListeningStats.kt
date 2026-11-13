@@ -3,6 +3,7 @@ package com.music.bitchord.data.stats
 import android.content.Context
 import android.util.Log
 import com.music.bitchord.data.model.Song
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -320,46 +321,79 @@ object ListeningStats {
      * Off the main thread and off the open bucket both: the months it needs are
      * files, and the one being written to is flushed first so that the page
      * agrees with what has just been playing.
+     *
+     * Guarded on purpose. Everything below is a merge of files the app wrote
+     * itself, so anything that throws here is a corrupt month or a corrupted
+     * derivative of one — and the last thing that deserves is killing the
+     * process the moment someone opens the Replay. A failure answers with an
+     * empty summary instead and is *not* cached, so the next call — after a
+     * minute of new listening, a new day, whatever raised the version — reads
+     * the months again as though nothing had failed.
      */
     suspend fun summary(period: ReplayPeriod): ReplaySummary = withContext(Dispatchers.IO) {
-        flushAndAwait()
-        val today = LocalDate.now()
-        val facts = ArtistFacts.revision.value
-        // Every input to the merge, so the cache cannot be stale: which months
-        // are on disk and what is in them ([version]), what is known about the
-        // artists in them, which period was asked for, and — because "this
-        // month" and "this year" are relative — what day it is. Opening the
-        // Library tab asks for this, so it is asked often and usually for an
-        // answer that has not changed.
-        cached?.takeIf {
-            it.period == period && it.version == version && it.facts == facts && it.day == today
-        }?.let { return@withContext it.summary }
+        try {
+            flushAndAwait()
+            val today = LocalDate.now()
+            val facts = ArtistFacts.revision.value
+            // Every input to the merge, so the cache cannot be stale: which months
+            // are on disk and what is in them ([version]), what is known about the
+            // artists in them, which period was asked for, and — because "this
+            // month" and "this year" are relative — what day it is. Opening the
+            // Library tab asks for this, so it is asked often and usually for an
+            // answer that has not changed.
+            cached?.takeIf {
+                it.period == period && it.version == version && it.facts == facts && it.day == today
+            }?.let { return@withContext it.summary }
 
-        val merged = MergedBucket()
-        // This device's month first, then every other device's copy of it —
-        // see [PeerListening]. Each is a separate sum of separate plays, so
-        // adding them is the whole of the merge. Own first so that where two
-        // entries fold into one row (a local file, say), the id that survives
-        // is one this phone can open.
-        fun monthBuckets(month: YearMonth): List<StoredBucket> =
-            listOfNotNull(read(month.toString())) + PeerListening.buckets(month.toString())
-        when {
-            period.needsDayFilter() -> {
-                // Week may span two months: read both, filter by day.
-                val range = period.range(today)!!
-                allMonths().filter { month ->
-                    val start = month.atDay(1)
-                    val end = month.atEndOfMonth()
-                    !(end < range.first || start > range.second)
-                }.forEach { month -> monthBuckets(month).forEach { bucket -> merged.add(bucket, range) } }
+            val merged = MergedBucket()
+            // This device's month first, then every other device's copy of it —
+            // see [PeerListening]. Each is a separate sum of separate plays, so
+            // adding them is the whole of the merge. Own first so that where two
+            // entries fold into one row (a local file, say), the id that survives
+            // is one this phone can open.
+            fun monthBuckets(month: YearMonth): List<StoredBucket> =
+                listOfNotNull(read(month.toString())) + PeerListening.buckets(month.toString())
+            when {
+                period.needsDayFilter() -> {
+                    // Week may span two months: read both, filter by day.
+                    val range = period.range(today)!!
+                    allMonths().filter { month ->
+                        val start = month.atDay(1)
+                        val end = month.atEndOfMonth()
+                        !(end < range.first || start > range.second)
+                    }.forEach { month -> monthBuckets(month).forEach { bucket -> merged.add(bucket, range) } }
+                }
+                else -> {
+                    allMonths().filter { period.covers(it, today) }
+                        .forEach { month -> monthBuckets(month).forEach(merged::add) }
+                }
             }
-            else -> {
-                allMonths().filter { period.covers(it, today) }
-                    .forEach { month -> monthBuckets(month).forEach(merged::add) }
+            merged.toSummary(period, today).also {
+                cached = Cached(period, version, facts, today, it)
             }
-        }
-        merged.toSummary(period, today).also {
-            cached = Cached(period, version, facts, today, it)
+        } catch (e: CancellationException) {
+            // A cancelled caller is not a failure of the data: re-cancelling is
+            // what keeps structured concurrency honest.
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not build the Replay summary for $period", e)
+            ReplaySummary(
+                period = period,
+                label = period.label(LocalDate.now()),
+                totalMs = 0,
+                totalPlays = 0,
+                songs = emptyList(),
+                artists = emptyList(),
+                albums = emptyList(),
+                genres = emptyList(),
+                hourOfDay = List(24) { 0L },
+                busiestDay = null,
+                busiestDayMs = 0,
+                distinctSongs = 0,
+                distinctArtists = 0,
+                distinctAlbums = 0,
+                since = null,
+            )
         }
     }
 
