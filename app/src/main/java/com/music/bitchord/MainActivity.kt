@@ -25,8 +25,9 @@ import com.music.bitchord.ui.screens.HomePinnedShelf
 import com.music.bitchord.ui.LOCAL_MUSIC_FOLDER_ID
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.shrinkHorizontally
-import androidx.compose.material.icons.rounded.KeyboardDoubleArrowRight
-import androidx.compose.material.icons.rounded.OpenInFull
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.foundation.layout.windowInsetsPadding
 import com.music.bitchord.ui.theme.stableStatusBarInsets
@@ -4535,7 +4536,9 @@ private fun BitChordApp(
                         onCollapse = { playerPaneOpen = false },
                         onExpand = openFullPlayer,
                     ) { height ->
-                        val paneHost = remember { PlayerPaneHost(expand = openFullPlayer) }
+                        val paneHost = remember {
+                            PlayerPaneHost(expand = openFullPlayer, collapse = { playerPaneOpen = false })
+                        }
                         CompositionLocalProvider(LocalPlayerPane provides paneHost) {
                             nowPlaying(song, paneWidth, height)
                         }
@@ -6574,9 +6577,9 @@ private const val TAB_SEARCH = 3
 /**
  * The player as a pane down the right-hand edge of a wide window — see
  * [playerPaneOpen] in [BitChordApp]. [player] is the very player the full-screen
- * sheet mounts, handed the pane's height; this adds only the two things a pane
- * has and a sheet does not: a way to put it away, and a way to take it full
- * screen.
+ * sheet mounts, handed the pane's height. Swiping the player up takes it full
+ * screen and down puts the pane away (see [PlayerPaneHost]); for anyone who
+ * can't swipe, the pane offers the same two as accessibility actions.
  */
 @Composable
 private fun PlayerPane(
@@ -6586,6 +6589,8 @@ private fun PlayerPane(
     onExpand: () -> Unit,
     player: @Composable (height: Dp) -> Unit,
 ) {
+    val collapseLabel = stringResource(R.string.player_pane_collapse)
+    val expandLabel = stringResource(R.string.player_pane_expand)
     BoxWithConstraints(
         Modifier
             .width(width)
@@ -6593,45 +6598,15 @@ private fun PlayerPane(
             // The player paints its backdrop as far as it is allowed; here that
             // is the pane, not the page beside it.
             .clipToBounds()
-            .background(Color.Black),
+            .background(Color.Black)
+            .semantics {
+                customActions = listOf(
+                    CustomAccessibilityAction(collapseLabel) { onCollapse(); true },
+                    CustomAccessibilityAction(expandLabel) { onExpand(); true },
+                )
+            },
     ) {
         if (showPlayer) player(maxHeight)
-        // Over the player's own top strip — the band a phone's sheet is
-        // dragged down by, which a pane has no use for — at either end.
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .windowInsetsPadding(stableStatusBarInsets())
-                .padding(horizontal = 12.dp, vertical = 2.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            PlayerPaneButton(
-                icon = Icons.Rounded.KeyboardDoubleArrowRight,
-                label = stringResource(R.string.player_pane_collapse),
-                onClick = onCollapse,
-            )
-            PlayerPaneButton(
-                icon = Icons.Rounded.OpenInFull,
-                label = stringResource(R.string.player_pane_expand),
-                onClick = onExpand,
-            )
-        }
-    }
-}
-
-@Composable
-private fun PlayerPaneButton(icon: ImageVector, label: String, onClick: () -> Unit) {
-    Box(
-        Modifier
-            .size(36.dp)
-            .clip(CircleShape)
-            // Over artwork of any colour, light or dark: a disc of shade under
-            // a white glyph reads on all of it.
-            .background(Color.Black.copy(alpha = 0.35f))
-            .clickable(onClickLabel = label, role = Role.Button, onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(20.dp))
     }
 }
 

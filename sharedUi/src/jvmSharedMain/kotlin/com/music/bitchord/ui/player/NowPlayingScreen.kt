@@ -669,8 +669,11 @@ fun playerPaneWidth(windowWidth: Dp): Dp =
  *   and the player's "hide the status bar" is the full-screen player's.
  * - The screen's rotation. A music video's full-screen button turns a phone
  *   on its side; in a pane it asks for the full-screen player, [expand].
+ * - The vertical swipe on the artwork and credits. On a phone, down closes
+ *   the sheet and up pulls the queue in. A pane has no sheet to pull: up
+ *   takes it full screen ([expand]) and down puts it away ([collapse]).
  */
-class PlayerPaneHost(val expand: () -> Unit)
+class PlayerPaneHost(val expand: () -> Unit, val collapse: () -> Unit)
 
 /** See [PlayerPaneHost]; null wherever the player has the window to itself. */
 val LocalPlayerPane = staticCompositionLocalOf<PlayerPaneHost?> { null }
@@ -999,11 +1002,18 @@ fun NowPlayingScreen(
     // Square video thumbnails: the picture takes the sleeve's own slot, cropped
     // to it, in place of the full-width box at the video's shape.
     val squareVideo = videoMode && VideoThumbnails.square
+    // Read here rather than with the other artwork settings below: the clip's
+    // rendition depends on it.
+    val fullBleedArt by PlayerSettings.fullBleedArtwork.collectAsStateWithLifecycle()
     val canvas = rememberCanvasArtwork(song)?.takeUnless { videoMode }?.let {
         // Apple's 3:4 rendition runs under the whole phone screen, the way its
-        // own player shows it; the square one stays the fallback.
+        // own player shows it; the square one stays the fallback. Only where
+        // the cover does run under the screen — full-bleed on, in a phone-sized
+        // player, the same test as the banner's ([heroMode]). In the square
+        // sleeve the tall clip has no room: it was drawn into the square with
+        // the picture pushed up and a fade across its foot.
         val tall = it.portraitUrl
-        if (tall != null && playerFillsWindow(windowWidth)) {
+        if (tall != null && fullBleedArt && playerFillsWindow(windowWidth)) {
             it.copy(url = tall, fallbackUrl = it.url, portraitUrl = null)
         } else it
     }
@@ -1440,7 +1450,6 @@ fun NowPlayingScreen(
             )
         }
     }
-    val fullBleedArt by PlayerSettings.fullBleedArtwork.collectAsStateWithLifecycle()
     // Full-bleed is a phone idiom. What the width has to rule out is a player
     // running a foot wider than the column of controls under it — edge to edge
     // meaning "a picture, and separately some controls" rather than "the
@@ -2760,7 +2769,8 @@ fun NowPlayingScreen(
                         // the top of the strip. As lyrics or the queue replace the
                         // album-cover player, it glides into the now-empty strip's
                         // vertical centre alongside the caption's fade.
-                        Box(
+                        // Not in a pane: there is no sheet for it to grab.
+                        if (pane == null) Box(
                             Modifier
                                 .align(Alignment.TopCenter)
                                 .offset {
@@ -2852,11 +2862,20 @@ fun NowPlayingScreen(
                                         bandBottom = bandTop +
                                             (ART_BOX_TOP_PAD + HEADER_HEIGHT).toPx()
                                     } else {
-                                        bandTop = dismissBandTop
+                                        // In a pane, from the top of the player: the
+                                        // strip a phone closes the sheet from is part
+                                        // of the swipe there too.
+                                        bandTop = if (pane != null) {
+                                            space?.positionInRoot()?.y ?: dismissBandTop
+                                        } else {
+                                            dismissBandTop
+                                        }
                                         bandBottom = dismissBandBottom
                                     }
                                     if (y >= bandTop && y <= bandBottom) {
-                                        if (!panelUp) {
+                                        if (pane != null && !panelUp) {
+                                            swipePane(down, PANE_SWIPE_DISTANCE.toPx(), pane)
+                                        } else if (!panelUp) {
                                             dragQueueIn(
                                                 down = down,
                                                 travel = bandBottom - bandTop -
@@ -4269,6 +4288,34 @@ fun NowPlayingScreen(
  * @param onSettle the state the release decided on, which that animation then
  *   finishes reaching from wherever the finger left off.
  */
+/** How far a swipe on a pane has to travel before it takes the pane up or down. */
+private val PANE_SWIPE_DISTANCE = 48.dp
+
+/**
+ * A vertical swipe on the player in a pane — see [PlayerPaneHost]. Up by
+ * [threshold] or more takes it full screen, down by as much puts it away;
+ * anything shorter is nothing, so a tap or a hesitant touch is left alone.
+ */
+private suspend fun AwaitPointerEventScope.swipePane(
+    down: PointerInputChange,
+    threshold: Float,
+    pane: PlayerPaneHost,
+) {
+    var travel = 0f
+    val drag = awaitVerticalTouchSlopOrCancellation(down.id) { change, over ->
+        change.consume()
+        travel += over
+    } ?: return
+    verticalDrag(drag.id) { change ->
+        travel += change.positionChange().y
+        change.consume()
+    }
+    when {
+        travel <= -threshold -> pane.expand()
+        travel >= threshold -> pane.collapse()
+    }
+}
+
 private suspend fun AwaitPointerEventScope.dragQueueIn(
     down: PointerInputChange,
     travel: Float,
