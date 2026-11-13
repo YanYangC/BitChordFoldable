@@ -20,6 +20,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedContent
 import com.music.bitchord.ui.components.NAV_BAR_LIFT
+import com.music.bitchord.ui.components.floatingBarInsets
 import com.music.bitchord.ui.screens.HomePinnedShelf
 import com.music.bitchord.ui.LOCAL_MUSIC_FOLDER_ID
 import androidx.compose.animation.expandHorizontally
@@ -4298,7 +4299,7 @@ private fun BitChordApp(
 
                 // The mini player, wherever it is drawn: over the tabs, or
                 // beside them on an unfolded screen.
-                val miniPlayer: @Composable (Song, Modifier) -> Unit = { song, modifier ->
+                val miniPlayer: @Composable (Song, Modifier, Dp?) -> Unit = { song, modifier, pillHeight ->
                     MiniPlayer(
                         song = song,
                         isPlaying = player.isPlaying,
@@ -4314,6 +4315,7 @@ private fun BitChordApp(
                         onBlockedControl = showHostOnlyNotice,
                         dock = activeDock,
                         pull = miniPlayerPull,
+                        pillHeight = pillHeight,
                         modifier = modifier,
                     )
                 }
@@ -4329,8 +4331,25 @@ private fun BitChordApp(
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     QueueActionNoticeHost(queueNotice)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.weight(1f)) {
+                    // One pill height and one baseline for both. The tab bar's
+                    // pill is measured rather than assumed — it is the glass or
+                    // the plain bar, and the glass one changes shape as the page
+                    // scrolls — and the mini player is held to it. Both stand
+                    // the same [floatingBarInsets] + [NAV_BAR_LIFT] off the
+                    // screen's foot, and line up along it.
+                    val barDensity = LocalDensity.current
+                    val barFootPx = floatingBarInsets.getBottom(barDensity)
+                    var tabPillHeight by remember { mutableStateOf<Dp?>(null) }
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        Box(
+                            Modifier
+                                .weight(1f)
+                                .onSizeChanged { size ->
+                                    tabPillHeight = with(barDensity) {
+                                        (size.height - barFootPx).toDp() - NAV_BAR_LIFT
+                                    }.takeIf { it > 0.dp }
+                                },
+                        ) {
                             if (glassActive) {
                                 // The tabs alone: the track is beside them, not in them.
                                 GlassNavBar(
@@ -4356,8 +4375,14 @@ private fun BitChordApp(
                                 )
                             }
                         }
-                        // Lifted as the tab bar is, so the two pills share a centre line.
-                        miniPlayer(besideSong, Modifier.weight(1f).padding(bottom = NAV_BAR_LIFT))
+                        Box(
+                            Modifier
+                                .weight(1f)
+                                .windowInsetsPadding(floatingBarInsets)
+                                .padding(bottom = NAV_BAR_LIFT),
+                        ) {
+                            miniPlayer(besideSong, Modifier.fillMaxWidth(), tabPillHeight)
+                        }
                     }
                 } else if (glassActive) Column(
                     modifier = Modifier
@@ -4408,7 +4433,7 @@ private fun BitChordApp(
                 ) {
                     QueueActionNoticeHost(queueNotice)
                     player.song.takeUnless { playerPaneShown }?.let { song ->
-                        miniPlayer(song, Modifier.fillMaxWidth())
+                        miniPlayer(song, Modifier.fillMaxWidth(), null)
                         Spacer(Modifier.height(8.dp))
                     }
                     FloatingBottomBar(

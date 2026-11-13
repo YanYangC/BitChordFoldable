@@ -49,6 +49,7 @@ import androidx.compose.ui.input.pointer.util.addPointerInputChange
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.unit.Dp
+import androidx.compose.foundation.layout.height
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
@@ -364,6 +365,12 @@ fun MiniPlayer(
     dock: PlayerDock? = null,
     /** Dragging the bar up into the player. */
     pull: MiniPlayerPull? = null,
+    /**
+     * The pill's height, when it has to match a neighbour's — the tab bar it
+     * stands beside on an unfolded screen. Null keeps the height its contents
+     * give it, as when it rides above the tabs.
+     */
+    pillHeight: Dp? = null,
     modifier: Modifier = Modifier,
 ) {
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
@@ -376,6 +383,7 @@ fun MiniPlayer(
     Box(
         modifier = modifier
             .padding(horizontal = BAR_GUTTER)
+            .then(if (pillHeight != null) Modifier.height(pillHeight) else Modifier)
             // Ahead of the surface, so a pull lifts the whole of it, frost and all.
             .miniPlayerGestures(
                 pull = pull,
@@ -406,6 +414,8 @@ fun MiniPlayer(
             // stray taps meant for the page behind it, and the sheet rising is
             // its own confirmation. The glyphs on it still buzz.
             .clickable(onClick = onExpand),
+        // Centred, so a pill held taller than its row keeps the row on its middle.
+        contentAlignment = Alignment.CenterStart,
     ) {
         Row(
             modifier = Modifier
