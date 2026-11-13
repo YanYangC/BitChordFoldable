@@ -118,6 +118,8 @@ fun PlaylistPickerSheet(
     startCreating: Boolean = false,
     offline: Boolean = false,
     headerTitle: String? = null,
+    /** Several picked songs going in at once: the header counts them instead of showing [song]. */
+    songCount: Int = 1,
 ) {
     var creating by remember { mutableStateOf(startCreating) }
     // By id rather than by value: the list is re-fetched under an open sheet,
@@ -185,7 +187,15 @@ fun PlaylistPickerSheet(
                     confirmEnabled = selected.isNotEmpty(),
                     onConfirm = { closeAfter { onAdd(playlists.filter { it.playlistId in selected }) } },
                 )
-                if (song != null) {
+                if (song != null && songCount > 1) {
+                    Text(
+                        text = pluralStringResource(R.plurals.picked_songs_count, songCount, songCount),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+                    )
+                    HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
+                } else if (song != null) {
                     SheetTrackHeader(song, title = headerTitle)
                     HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
                 } else if (!songs.isNullOrEmpty()) {
