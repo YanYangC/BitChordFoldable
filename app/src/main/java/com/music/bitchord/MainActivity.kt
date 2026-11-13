@@ -1110,7 +1110,17 @@ private fun BitChordApp(
     val homeLocalAlbums by viewModel.homeLocalAlbums.collectAsStateWithLifecycle()
     val yourPlaylistsTitle = stringResource(R.string.your_playlists)
     val localMusicTitle = stringResource(R.string.local_music)
-    val homePinnedShelves = remember(playlists, localPlaylistItems, homeLocalAlbums, yourPlaylistsTitle, localMusicTitle) {
+    // Playlists downloaded whole — a YouTube Music playlist's download button —
+    // lead the Local Music row: they are this device's playlists now.
+    val downloadedPlaylistItems = libraryDeviceItems(downloadedReleases.filter { it.playlist })
+    // Home is the first page anyone sees, so it asks for the account's
+    // playlists itself rather than waiting on the Library tab to.
+    LaunchedEffect(signedIn) {
+        if (signedIn && playlists.isEmpty()) viewModel.loadPlaylists()
+    }
+    val homePinnedShelves = remember(
+        playlists, localPlaylistItems, downloadedPlaylistItems, homeLocalAlbums, yourPlaylistsTitle, localMusicTitle,
+    ) {
         listOf(
             HomePinnedShelf(
                 shelf = HomeShelf(
@@ -1134,7 +1144,7 @@ private fun BitChordApp(
             HomePinnedShelf(
                 shelf = HomeShelf(
                     title = localMusicTitle,
-                    items = homeLocalAlbums.map { album ->
+                    items = downloadedPlaylistItems + homeLocalAlbums.map { album ->
                         ShelfItem(
                             title = album.title,
                             subtitle = album.subtitle,
@@ -3516,6 +3526,41 @@ private fun BitChordApp(
                                 // in the track menu.
                                 onToggleLibrary = if (signedIn) {
                                     { viewModel.toggleLibrary(page.browseId) }
+                                } else {
+                                    null
+                                },
+                                // A YouTube Music playlist, downloaded whole and kept
+                                // as a playlist on the device: Download all from its
+                                // menu, on a button in the header. The full listing
+                                // is fetched rather than the page's loaded rows, so
+                                // a long playlist isn't cut off at its first page.
+                                // "VLOLAK" pages are albums, which keep the menu.
+                                onDownloadRelease = if (
+                                    page.type == BrowseType.PLAYLIST &&
+                                    page.browseId.startsWith("VL") && !page.browseId.startsWith("VLOLAK")
+                                ) {
+                                    {
+                                        withBrowseSongs(
+                                            BrowseTarget(
+                                                browseId = page.browseId,
+                                                title = page.title,
+                                                subtitle = page.subtitle,
+                                                thumbnailUrl = page.thumbnailUrl,
+                                                type = BrowseType.PLAYLIST,
+                                            ),
+                                        ) { songs ->
+                                            startDownload(
+                                                songs,
+                                                DownloadTarget(
+                                                    id = page.browseId,
+                                                    title = page.title,
+                                                    subtitle = page.subtitle,
+                                                    thumbnailUrl = page.thumbnailUrl,
+                                                    playlist = true,
+                                                ),
+                                            )
+                                        }
+                                    }
                                 } else {
                                     null
                                 },

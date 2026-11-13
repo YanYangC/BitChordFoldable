@@ -336,6 +336,11 @@ fun DetailScreen(
      */
     onToggleLibrary: (() -> Unit)? = null,
     /**
+     * Downloads this whole release and keeps it as a playlist on the device,
+     * from a button in the header. Null where that is not on offer.
+     */
+    onDownloadRelease: (() -> Unit)? = null,
+    /**
      * Subscribes to this artist's channel, or unsubscribes —
      * [DetailPage.subscription] says which way round. The artist page's answer
      * to [onToggleLibrary], and null in the same circumstances: a guest, or a
@@ -599,6 +604,7 @@ fun DetailScreen(
                         // A folder's credit says where its tracks live, not who made them.
                         onArtistClick = onArtistClick.takeIf { folder == null },
                         onToggleLibrary = onToggleLibrary,
+                        onDownloadRelease = onDownloadRelease,
                         onDownloadAll = folder?.onDownload?.let { download -> { download(songs) } },
                     )
                 }
@@ -928,6 +934,8 @@ private fun ReleaseHeader(
     onShuffle: () -> Unit,
     onArtistClick: ((String, String) -> Unit)?,
     onToggleLibrary: (() -> Unit)?,
+    /** Downloads the whole release as an on-device playlist; null shows no button. */
+    onDownloadRelease: (() -> Unit)? = null,
     /** The Cached songs folder's: saves every track on it to Downloads. Null hides it. */
     onDownloadAll: (() -> Unit)? = null,
 ) {
@@ -1172,6 +1180,16 @@ private fun ReleaseHeader(
                         onClick = {},
                         size = RELEASE_SIDE_BUTTON,
                         enabled = false,
+                    )
+                }
+                // The whole release, downloaded and kept as a playlist on the
+                // device — the same as Download all in its menu, a tap away.
+                onDownloadRelease?.let {
+                    CircleIconButton(
+                        icon = Icons.Rounded.Download,
+                        contentDescription = stringResource(R.string.download_all),
+                        onClick = it,
+                        size = RELEASE_SIDE_BUTTON,
                     )
                 }
             }
