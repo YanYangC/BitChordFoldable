@@ -669,9 +669,10 @@ fun playerPaneWidth(windowWidth: Dp): Dp =
  *   and the player's "hide the status bar" is the full-screen player's.
  * - The screen's rotation. A music video's full-screen button turns a phone
  *   on its side; in a pane it asks for the full-screen player, [expand].
- * - The vertical swipe on the artwork and credits. On a phone, down closes
- *   the sheet and up pulls the queue in. A pane has no sheet to pull: up
- *   takes it full screen ([expand]) and down puts it away ([collapse]).
+ * - The vertical swipe. On a phone, a swipe on the artwork and credits
+ *   closes the sheet (down) or pulls the queue in (up). A pane has no sheet
+ *   to pull; a swipe on its lower third, within a thumb's reach, takes it
+ *   full screen ([expand]) or puts it away ([collapse]).
  */
 class PlayerPaneHost(val expand: () -> Unit, val collapse: () -> Unit)
 
@@ -2861,15 +2862,19 @@ fun NowPlayingScreen(
                                         bandTop = space?.positionInRoot()?.y ?: 0f
                                         bandBottom = bandTop +
                                             (ART_BOX_TOP_PAD + HEADER_HEIGHT).toPx()
+                                    } else if (pane != null) {
+                                        // In a pane, the lower part of the player, where a
+                                        // thumb already is: [PANE_SWIPE_ZONE] of it, over
+                                        // the controls. They keep their own gestures — a
+                                        // tap stays a tap, and the scrubber takes its own
+                                        // drag — and only a swipe of [PANE_SWIPE_DISTANCE]
+                                        // moves the pane.
+                                        val top = space?.positionInRoot()?.y ?: 0f
+                                        val height = space?.size?.height?.toFloat() ?: 0f
+                                        bandTop = top + height * (1f - PANE_SWIPE_ZONE)
+                                        bandBottom = top + height
                                     } else {
-                                        // In a pane, from the top of the player: the
-                                        // strip a phone closes the sheet from is part
-                                        // of the swipe there too.
-                                        bandTop = if (pane != null) {
-                                            space?.positionInRoot()?.y ?: dismissBandTop
-                                        } else {
-                                            dismissBandTop
-                                        }
+                                        bandTop = dismissBandTop
                                         bandBottom = dismissBandBottom
                                     }
                                     if (y >= bandTop && y <= bandBottom) {
@@ -4290,6 +4295,9 @@ fun NowPlayingScreen(
  */
 /** How far a swipe on a pane has to travel before it takes the pane up or down. */
 private val PANE_SWIPE_DISTANCE = 48.dp
+
+/** The share of a pane's player, from its foot, that a swipe up or down moves the pane from. */
+private const val PANE_SWIPE_ZONE = 1f / 3f
 
 /**
  * A vertical swipe on the player in a pane — see [PlayerPaneHost]. Up by
