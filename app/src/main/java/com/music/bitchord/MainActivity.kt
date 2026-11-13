@@ -19,6 +19,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedContent
+import com.music.bitchord.ui.components.NAV_BAR_LIFT
 import com.music.bitchord.ui.screens.HomePinnedShelf
 import com.music.bitchord.ui.LOCAL_MUSIC_FOLDER_ID
 import androidx.compose.animation.expandHorizontally
@@ -587,6 +588,10 @@ private fun BitChordApp(
     val paneRoom = playerPaneAvailable(windowWidth, windowHeight)
     var playerPaneOpen by rememberSaveable { mutableStateOf(false) }
     val playerPaneShown = paneRoom && playerPaneOpen
+    // With the room for a pane but the pane put away, the mini player stands
+    // beside the tab bar rather than on top of it — tabs on the left, the
+    // track on the right, one row across the foot of the page.
+    val miniBesideTabs = paneRoom && !playerPaneShown
     // Bringing the player up from somewhere other than the mini player — a
     // widget's artwork, a file opened into the app: the pane where there is
     // one, the sheet where there is not.
@@ -2540,7 +2545,8 @@ private fun BitChordApp(
     // See [topBarContentPadding].
     val listPadding = PaddingValues(
         top = topBarContentPadding(),
-        bottom = if (player.song != null && !playerPaneShown) 210.dp else 140.dp,
+        // The mini player adds a row only where it stacks over the tabs.
+        bottom = if (player.song != null && !paneRoom) 210.dp else 140.dp,
     )
 
     // What colour the page currently under the bars is. The fades either end
@@ -4258,7 +4264,7 @@ private fun BitChordApp(
 
                 // Drawn before the bars so their own glass reads on top of it.
                 BottomFadeScrim(
-                    withMiniPlayer = player.song != null && !playerPaneShown,
+                    withMiniPlayer = player.song != null && !paneRoom,
                     // Not the wash: by the foot of the screen the page has finished
                     // easing out of it and into this, so this is what is actually
                     // under the tab bar.
@@ -4290,7 +4296,70 @@ private fun BitChordApp(
                     }
                 }
 
-                if (glassActive) Column(
+                // The mini player, wherever it is drawn: over the tabs, or
+                // beside them on an unfolded screen.
+                val miniPlayer: @Composable (Song, Modifier) -> Unit = { song, modifier ->
+                    MiniPlayer(
+                        song = song,
+                        isPlaying = player.isPlaying,
+                        isLoading = playPauseBusy,
+                        hazeState = hazeState,
+                        onPlayPause = {
+                            togglePlayPause()
+                        },
+                        onNext = { controller?.seekToNextMediaItem() },
+                        onPrevious = { controller?.seekToPrevious() },
+                        onExpand = openPlayer,
+                        controlsLocked = controlsLocked,
+                        onBlockedControl = showHostOnlyNotice,
+                        dock = activeDock,
+                        pull = miniPlayerPull,
+                        modifier = modifier,
+                    )
+                }
+                val besideSong = player.song.takeIf { miniBesideTabs }
+                if (besideSong != null) Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        // Two bars' worth of room, each half held to what a
+                        // phone gives one bar — see [FLOATING_BAR_MAX_WIDTH].
+                        .widthIn(max = FLOATING_BAR_MAX_WIDTH * 2)
+                        .fillMaxWidth()
+                        .onSizeChanged { floatingBarsHeight.intValue = it.height },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    QueueActionNoticeHost(queueNotice)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.weight(1f)) {
+                            if (glassActive) {
+                                // The tabs alone: the track is beside them, not in them.
+                                GlassNavBar(
+                                    tabs = tabs,
+                                    selectedIndex = selectedTab,
+                                    onTabSelected = onTabSelected,
+                                    scrollConnection = navBarScroll,
+                                    song = null,
+                                    isPlaying = player.isPlaying,
+                                    isLoading = playPauseBusy,
+                                    onPlayPause = { togglePlayPause() },
+                                    onNext = { controller?.seekToNextMediaItem() },
+                                    onPrevious = { controller?.seekToPrevious() },
+                                    onExpand = openPlayer,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            } else {
+                                FloatingBottomBar(
+                                    tabs = tabs,
+                                    selectedIndex = selectedTab,
+                                    hazeState = hazeState,
+                                    onTabSelected = onTabSelected,
+                                )
+                            }
+                        }
+                        // Lifted as the tab bar is, so the two pills share a centre line.
+                        miniPlayer(besideSong, Modifier.weight(1f).padding(bottom = NAV_BAR_LIFT))
+                    }
+                } else if (glassActive) Column(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .widthIn(max = FLOATING_BAR_MAX_WIDTH)
@@ -4339,23 +4408,7 @@ private fun BitChordApp(
                 ) {
                     QueueActionNoticeHost(queueNotice)
                     player.song.takeUnless { playerPaneShown }?.let { song ->
-                        MiniPlayer(
-                            song = song,
-                            isPlaying = player.isPlaying,
-                            isLoading = playPauseBusy,
-                            hazeState = hazeState,
-                            onPlayPause = {
-                                togglePlayPause()
-                            },
-                            onNext = { controller?.seekToNextMediaItem() },
-                            onPrevious = { controller?.seekToPrevious() },
-                            onExpand = openPlayer,
-                            controlsLocked = controlsLocked,
-                            onBlockedControl = showHostOnlyNotice,
-                            dock = activeDock,
-                            pull = miniPlayerPull,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
+                        miniPlayer(song, Modifier.fillMaxWidth())
                         Spacer(Modifier.height(8.dp))
                     }
                     FloatingBottomBar(
