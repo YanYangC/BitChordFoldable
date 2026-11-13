@@ -270,9 +270,18 @@ class PrecisionAudioSink(
         configuredSampleRate = 0
         publishLoopFormat(0, 0, false)
         if (isAudible()) {
+            // Decoded PCM lands here too, when the precision path could not be
+            // set up for it; calling that "not linear PCM" sent anyone reading
+            // the pipeline looking for a bitstream that was never there.
+            val decodedPcm = (format.sampleMimeType == null || format.sampleMimeType == MimeTypes.AUDIO_RAW) &&
+                Util.isEncodingLinearPcm(format.pcmEncoding)
             AudioOutputStatus.publishOutputExactness(
                 exact = false,
-                detail = "${encodingLabel(format.pcmEncoding)} is not linear PCM",
+                detail = if (decodedPcm) {
+                    "${encodingLabel(format.pcmEncoding)} on the legacy output path"
+                } else {
+                    "${format.sampleMimeType ?: "Bitstream"} is not linear PCM"
+                },
             )
             AudioOutputStatus.publishDsp(
                 decoderOutputEncoding = null,
