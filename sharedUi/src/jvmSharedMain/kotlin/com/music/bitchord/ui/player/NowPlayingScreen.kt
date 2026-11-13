@@ -4345,7 +4345,7 @@ fun NowPlayingScreen(
                                 hazeState = playerHaze,
                                 overlayOpen = { overlayOpen.value },
                             ) {
-                                if (signedIn || song.localUri != null) {
+                                if (signedIn || song.localUri != null && (song.videoId.startsWith("content://") || song.videoId.startsWith("file://"))) {
                                     val liked = likeStatus == LikeStatus.LIKE
                                     CircleGlyph(
                                         icon = if (liked) BitChordIcons.StarFilled else BitChordIcons.Star,
