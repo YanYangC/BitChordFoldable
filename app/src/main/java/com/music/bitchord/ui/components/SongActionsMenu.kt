@@ -348,7 +348,9 @@ fun SongActionsMenu(
             )
         }
 
-        if (startsGroup()) IosMenuSeparator()
+        if (song.albumId != null || song.artistId != null || resolvingLinks || !isOffline) {
+            if (startsGroup()) IosMenuSeparator()
+        }
         // Names where each one leads under it, as a menu's "Go to" does.
         when (val id = song.albumId) {
             null -> if (resolvingLinks) {
@@ -372,8 +374,10 @@ fun SongActionsMenu(
                 description = song.artist.takeIf { it.isNotBlank() },
             ) { onOpenArtist(id) }
         }
-        ActionRow(SfIcons.Info, stringResource(R.string.song_info), accent = palette.accent) {
-            showingSongInfo = true
+        if (!isOffline) {
+            ActionRow(SfIcons.Info, stringResource(R.string.song_info), accent = palette.accent) {
+                showingSongInfo = true
+            }
         }
 
         // The player's own: about the track playing right now rather than
