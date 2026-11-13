@@ -19,6 +19,19 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedContent
+import com.music.bitchord.ui.screens.HomePinnedShelf
+import com.music.bitchord.ui.LOCAL_MUSIC_FOLDER_ID
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.material.icons.rounded.KeyboardDoubleArrowRight
+import androidx.compose.material.icons.rounded.OpenInFull
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.foundation.layout.windowInsetsPadding
+import com.music.bitchord.ui.theme.stableStatusBarInsets
+import com.music.bitchord.ui.player.LocalPlayerPane
+import com.music.bitchord.ui.player.PlayerPaneHost
+import com.music.bitchord.ui.player.playerPaneAvailable
+import com.music.bitchord.ui.player.playerPaneWidth
 import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.CubicBezierEasing
@@ -559,6 +572,27 @@ private fun BitChordApp(
      * permanent pane.
      */
     var showNowPlaying by remember { mutableStateOf(false) }
+    /**
+     * The exception to the above, for a window with the room: an unfolded
+     * foldable, a tablet. There the mini player opens the player as a pane
+     * down the right-hand edge with the page still in use beside it, and the
+     * full-screen take-over is one more step, from the pane's own expand
+     * button. Unlike the docked pane this app once had, it is never there
+     * unasked: closed, the page has the whole window back.
+     *
+     * [playerPaneOpen] is what was asked for and outlives a fold: folded, the
+     * window has no room and the mini player is back; unfolded again, so is
+     * the pane.
+     */
+    val paneRoom = playerPaneAvailable(windowWidth, windowHeight)
+    var playerPaneOpen by rememberSaveable { mutableStateOf(false) }
+    val playerPaneShown = paneRoom && playerPaneOpen
+    // Bringing the player up from somewhere other than the mini player — a
+    // widget's artwork, a file opened into the app: the pane where there is
+    // one, the sheet where there is not.
+    val raisePlayer: () -> Unit = {
+        if (paneRoom) playerPaneOpen = true else showNowPlaying = true
+    }
     // The DAC's own volume while direct USB output owns it; the full player
     // has its own bar for that, so the HUD stays out of its way.
     androidx.compose.runtime.SideEffect { VolumeHud.suppressed = showNowPlaying }
@@ -607,9 +641,23 @@ private fun BitChordApp(
     // opened from inside it. Set straight to false, the sheet left in one frame
     // on its window's own exit animation — the old fast drop, with a copy of the
     // artwork slipping down out of the mini player's cover after it.
+    //
+    // Only ever the sheet: a pane beside the page is not in the way of
+    // whatever page is being opened, and stays.
     val dismissPlayer: () -> Unit = {
         if (reducePlayerMotion) showNowPlaying = false else playerSheetMotion.close()
     }
+    // The mini player's tap: the pane where the window has room for one, the
+    // full-screen player otherwise — which is also the pane's expand button.
+    val openFullPlayer: () -> Unit = {
+        if (reducePlayerMotion) showNowPlaying = true else playerSheetMotion.open()
+    }
+    val openPlayer: () -> Unit = {
+        if (paneRoom) playerPaneOpen = true else openFullPlayer()
+    }
+    // A swipe up on the mini player drags the full-screen sheet up after it;
+    // where a tap opens the pane instead there is no sheet under the finger.
+    val miniPlayerPull = playerSheetMotion.takeIf { !reducePlayerMotion && !paneRoom }
     // The far end of the relay from a widget's artwork. Cleared here rather than
     // where it was set, so the request is spent by being served — see
     // [PlayerDeepLink.handled]. The sheet itself is gated on there being a track,
@@ -618,7 +666,7 @@ private fun BitChordApp(
     val openPlayerRequested by PlayerDeepLink.pending.collectAsStateWithLifecycle()
     LaunchedEffect(openPlayerRequested) {
         if (openPlayerRequested) {
-            showNowPlaying = true
+            raisePlayer()
             PlayerDeepLink.handled()
         }
     }
@@ -1043,6 +1091,59 @@ private fun BitChordApp(
             thumbnailUrl = playlist.songs.firstOrNull { !it.thumbnailUrl.isNullOrBlank() }?.thumbnailUrl,
             videoId = null,
             browseId = playlist.browseId,
+        )
+    }
+    // ---- Home's own rows ----
+    // The listener's playlists — the account's, then those kept in the app —
+    // and the albums their device's music groups into, under the feed's lead
+    // shelf. See [HomePinnedShelf].
+    val homeLocalAlbums by viewModel.homeLocalAlbums.collectAsStateWithLifecycle()
+    val yourPlaylistsTitle = stringResource(R.string.your_playlists)
+    val localMusicTitle = stringResource(R.string.local_music)
+    val homePinnedShelves = remember(playlists, localPlaylistItems, homeLocalAlbums, yourPlaylistsTitle, localMusicTitle) {
+        listOf(
+            HomePinnedShelf(
+                shelf = HomeShelf(
+                    title = yourPlaylistsTitle,
+                    items = playlists.map { playlist ->
+                        ShelfItem(
+                            title = playlist.title,
+                            subtitle = playlist.subtitle,
+                            thumbnailUrl = playlist.thumbnailUrl,
+                            videoId = null,
+                            browseId = playlist.browseId,
+                        )
+                    } + localPlaylistItems,
+                ),
+                onShowAll = {
+                    navigator.clear()
+                    viewModel.closeMoodGenre()
+                    selectedTab = TAB_LIBRARY
+                },
+            ),
+            HomePinnedShelf(
+                shelf = HomeShelf(
+                    title = localMusicTitle,
+                    items = homeLocalAlbums.map { album ->
+                        ShelfItem(
+                            title = album.title,
+                            subtitle = album.subtitle,
+                            thumbnailUrl = album.thumbnailUrl,
+                            videoId = null,
+                            browseId = album.browseId,
+                        )
+                    },
+                ),
+                // The Local Music folder, whose Albums tab has every one of them.
+                onShowAll = {
+                    viewModel.openDetail(
+                        browseId = LOCAL_MUSIC_FOLDER_ID,
+                        title = localMusicTitle,
+                        subtitle = "",
+                        thumbnailUrl = null,
+                    )
+                },
+            ),
         )
     }
     // What a browse id is recorded under in Downloads.collections, when it names
@@ -2064,7 +2165,7 @@ private fun BitChordApp(
                     0,
                     QueueSource(openedFileLabel, PlaybackSourceType.SHARED_LINK, song.localUri),
                 )
-                showNowPlaying = true
+                raisePlayer()
             }
         }
         MusicLink.handled()
@@ -2220,6 +2321,7 @@ private fun BitChordApp(
             viewModel.reloadLocalDetail("local:all")
             viewModel.reloadLocalDetail("local:downloads")
             viewModel.loadLibrarySongs()
+            viewModel.loadHomeLocalAlbums()
         } else {
             Toast.makeText(context, context.getString(R.string.storage_required_read), Toast.LENGTH_SHORT).show()
         }
@@ -2438,7 +2540,7 @@ private fun BitChordApp(
     // See [topBarContentPadding].
     val listPadding = PaddingValues(
         top = topBarContentPadding(),
-        bottom = if (player.song != null) 210.dp else 140.dp,
+        bottom = if (player.song != null && !playerPaneShown) 210.dp else 140.dp,
     )
 
     // What colour the page currently under the bars is. The fades either end
@@ -2476,7 +2578,20 @@ private fun BitChordApp(
     // which album or artist page it belongs to. Fill that in while the player
     // is actually up — when the sheet is raised, so playing an album from the
     // mini player still costs nothing.
-    val playerShowing = showNowPlaying
+    val playerShowing = showNowPlaying || playerPaneShown
+    // Nothing playing any more, nothing to keep a pane open for: the next
+    // track starts in the mini player like any other. Only on the way from a
+    // track to none — on a cold launch there is no track yet either, and a
+    // widget's request for the player has to outlast that.
+    var hadSong by remember { mutableStateOf(false) }
+    LaunchedEffect(player.song == null) {
+        if (player.song != null) {
+            hadSong = true
+        } else if (hadSong) {
+            hadSong = false
+            playerPaneOpen = false
+        }
+    }
     var links by remember { mutableStateOf<Song?>(null) }
     LaunchedEffect(player.song?.videoId, playerShowing) {
         links = null
@@ -2508,7 +2623,12 @@ private fun BitChordApp(
 
     // The player's whole parameter list, kept apart from the sheet that
     // mounts it so the sheet's own setup reads on its own.
-    val nowPlaying: @Composable (Song) -> Unit = { song ->
+    //
+    // And because there are two places it can be mounted: the sheet over the
+    // page, and the pane beside it — see [playerPaneOpen]. Each hands in the
+    // room it has, which is what the player takes for its window: the pane's
+    // width makes it a phone's portrait player, whatever the window is.
+    val nowPlaying: @Composable (Song, Dp, Dp) -> Unit = { song, playerWidth, playerHeight ->
         val effectiveSong = optimisticVersionSong?.takeIf {
             it.videoId == convertedAudioId || it.videoId == convertedVideoId || it.videoId == keepVideoId ||
             it.videoId == YtMusicRepository.cachedAudioVersion(song.videoId)?.videoId ||
@@ -2540,8 +2660,8 @@ private fun BitChordApp(
             song = displayedSong,
             playedBy = playedBy,
             accountName = account?.name,
-            windowWidth = windowWidth,
-            windowHeight = windowHeight,
+            windowWidth = playerWidth,
+            windowHeight = playerHeight,
             // A canvas under the ⋯ menu holds still. Asked, not passed — see
             // the parameter.
             menuOpen = { songActions != null && menuFromPlayer && songMenuOrigin == null },
@@ -2657,8 +2777,11 @@ private fun BitChordApp(
                 songMenuAnchor = MenuAnchor.consume()
                 songActions = song
                 // Taken on the frame the menu opens on, which is long anyway,
-                // rather than on one of its spring's.
-                if (!AppSettings.reduceDynamicBlur.value && !playerLiveCanvas) playerBackdrop.capture()
+                // rather than on one of its spring's. Only of the sheet: from
+                // the pane the menu hangs over the page's still instead.
+                if (showNowPlaying && !AppSettings.reduceDynamicBlur.value && !playerLiveCanvas) {
+                    playerBackdrop.capture()
+                }
             },
             // Pushed over whatever page is under the player, so back from it
             // returns there.
@@ -2818,6 +2941,9 @@ private fun BitChordApp(
         // and dialog further down registers its own handler as it opens, and
         // so outranks all of these while it is up.
         BackHandler(enabled = canGoBack, onBack = goBack)
+        // With nothing left to go back through, back puts the pane away before
+        // it hands the app to the system — the pane is the last thing opened.
+        BackHandler(enabled = !canGoBack && playerPaneShown) { playerPaneOpen = false }
         // Replay's stories and its share sheet are drawn over everything, and
         // unwind in the order they were opened. Only while there is a summary
         // to draw them from — otherwise back would spend a step closing
@@ -3423,6 +3549,7 @@ private fun BitChordApp(
                                 onMoodsShowAll = { navigator.push(AppRoute.Moods) },
                                 // Nothing on Home is seen while the greeting covers it.
                                 artworkMotion = artworkMotion && !showDiwali,
+                                pinnedShelves = homePinnedShelves,
                                 onTopPickLongPress = { pick ->
                                     pick.browseId?.let { browseId ->
                                         onShelfLongPress(
@@ -4131,7 +4258,7 @@ private fun BitChordApp(
 
                 // Drawn before the bars so their own glass reads on top of it.
                 BottomFadeScrim(
-                    withMiniPlayer = player.song != null,
+                    withMiniPlayer = player.song != null && !playerPaneShown,
                     // Not the wash: by the foot of the screen the page has finished
                     // easing out of it and into this, so this is what is actually
                     // under the tab bar.
@@ -4180,7 +4307,8 @@ private fun BitChordApp(
                         selectedIndex = selectedTab,
                         onTabSelected = onTabSelected,
                         scrollConnection = navBarScroll,
-                        song = player.song,
+                        // In the pane, the player is not also in the bar.
+                        song = player.song.takeUnless { playerPaneShown },
                         isPlaying = player.isPlaying,
                         isLoading = playPauseBusy,
                         onPlayPause = {
@@ -4188,15 +4316,11 @@ private fun BitChordApp(
                         },
                         onNext = { controller?.seekToNextMediaItem() },
                         onPrevious = { controller?.seekToPrevious() },
-                        onExpand = if (reducePlayerMotion) {
-                            { showNowPlaying = true }
-                        } else {
-                            playerSheetMotion::open
-                        },
+                        onExpand = openPlayer,
                         controlsLocked = controlsLocked,
                         onBlockedControl = showHostOnlyNotice,
                         dock = activeDock,
-                        pull = playerSheetMotion.takeIf { !reducePlayerMotion },
+                        pull = miniPlayerPull,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 } else Column(
@@ -4214,7 +4338,7 @@ private fun BitChordApp(
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     QueueActionNoticeHost(queueNotice)
-                    player.song?.let { song ->
+                    player.song.takeUnless { playerPaneShown }?.let { song ->
                         MiniPlayer(
                             song = song,
                             isPlaying = player.isPlaying,
@@ -4225,15 +4349,11 @@ private fun BitChordApp(
                             },
                             onNext = { controller?.seekToNextMediaItem() },
                             onPrevious = { controller?.seekToPrevious() },
-                            onExpand = if (reducePlayerMotion) {
-                                { showNowPlaying = true }
-                            } else {
-                                playerSheetMotion::open
-                            },
+                            onExpand = openPlayer,
                             controlsLocked = controlsLocked,
                             onBlockedControl = showHostOnlyNotice,
                             dock = activeDock,
-                            pull = playerSheetMotion.takeIf { !reducePlayerMotion },
+                            pull = miniPlayerPull,
                             modifier = Modifier.fillMaxWidth(),
                         )
                         Spacer(Modifier.height(8.dp))
@@ -4247,6 +4367,39 @@ private fun BitChordApp(
                 }
             }
 
+            // ---- The player beside the page ----
+            // See [playerPaneOpen]. The page above is the row's weighted
+            // child, so as this grows in from the right edge the page gives
+            // up exactly the width it takes, and gets it back as it goes.
+            val paneWidth = playerPaneWidth(windowWidth)
+            AnimatedVisibility(
+                visible = playerPaneShown && playerSong != null,
+                enter = expandHorizontally(expandFrom = Alignment.Start) + fadeIn(),
+                exit = shrinkHorizontally(shrinkTowards = Alignment.Start) + fadeOut(),
+            ) {
+                // Held through the exit, so the pane leaves showing the
+                // track it had rather than going blank as it goes.
+                val lastPaneSong = remember { arrayOfNulls<Song>(1) }
+                playerSong?.let { lastPaneSong[0] = it }
+                (playerSong ?: lastPaneSong[0])?.let { song ->
+                    PlayerPane(
+                        width = paneWidth,
+                        // While the full-screen player is up over it, the pane's
+                        // copy of the player would only be paying twice for the
+                        // same artwork, canvas and lyrics nobody can see.
+                        // [coveredByPlayer]: derived, so the sheet's travel
+                        // does not recompose the pane on every frame.
+                        showPlayer = !coveredByPlayer,
+                        onCollapse = { playerPaneOpen = false },
+                        onExpand = openFullPlayer,
+                    ) { height ->
+                        val paneHost = remember { PlayerPaneHost(expand = openFullPlayer) }
+                        CompositionLocalProvider(LocalPlayerPane provides paneHost) {
+                            nowPlaying(song, paneWidth, height)
+                        }
+                    }
+                }
+            }
         }
 
         val playerRaised = showNowPlaying && playerSong != null
@@ -4797,7 +4950,7 @@ private fun BitChordApp(
                         },
                     ) {
                         CompositionLocalProvider(LocalPlayerDock provides activeDock) {
-                            nowPlaying(playerSong)
+                            nowPlaying(playerSong, windowWidth, windowHeight)
                         }
                     }
                     IosMenuPopover(
@@ -4884,8 +5037,8 @@ private fun BitChordApp(
             // over the player and blur it.
             // A player menu goes with the player: left up, it would carry on here,
             // over the page.
-            LaunchedEffect(playerRaised) {
-                if (!playerRaised && menuFromPlayer) songActions = null
+            LaunchedEffect(playerRaised, playerPaneShown) {
+                if (!playerRaised && !playerPaneShown && menuFromPlayer) songActions = null
             }
             IosMenuPopover(
                 item = songActions?.takeIf { songMenuOrigin == null && !(menuFromPlayer && playerRaised) },
@@ -6275,3 +6428,67 @@ private const val TAB_HOME = 0
 private const val TAB_EXPLORE = 1
 private const val TAB_LIBRARY = 2
 private const val TAB_SEARCH = 3
+
+/**
+ * The player as a pane down the right-hand edge of a wide window — see
+ * [playerPaneOpen] in [BitChordApp]. [player] is the very player the full-screen
+ * sheet mounts, handed the pane's height; this adds only the two things a pane
+ * has and a sheet does not: a way to put it away, and a way to take it full
+ * screen.
+ */
+@Composable
+private fun PlayerPane(
+    width: Dp,
+    showPlayer: Boolean,
+    onCollapse: () -> Unit,
+    onExpand: () -> Unit,
+    player: @Composable (height: Dp) -> Unit,
+) {
+    BoxWithConstraints(
+        Modifier
+            .width(width)
+            .fillMaxHeight()
+            // The player paints its backdrop as far as it is allowed; here that
+            // is the pane, not the page beside it.
+            .clipToBounds()
+            .background(Color.Black),
+    ) {
+        if (showPlayer) player(maxHeight)
+        // Over the player's own top strip — the band a phone's sheet is
+        // dragged down by, which a pane has no use for — at either end.
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .windowInsetsPadding(stableStatusBarInsets())
+                .padding(horizontal = 12.dp, vertical = 2.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            PlayerPaneButton(
+                icon = Icons.Rounded.KeyboardDoubleArrowRight,
+                label = stringResource(R.string.player_pane_collapse),
+                onClick = onCollapse,
+            )
+            PlayerPaneButton(
+                icon = Icons.Rounded.OpenInFull,
+                label = stringResource(R.string.player_pane_expand),
+                onClick = onExpand,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PlayerPaneButton(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .size(36.dp)
+            .clip(CircleShape)
+            // Over artwork of any colour, light or dark: a disc of shade under
+            // a white glyph reads on all of it.
+            .background(Color.Black.copy(alpha = 0.35f))
+            .clickable(onClickLabel = label, role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(20.dp))
+    }
+}

@@ -72,6 +72,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.State
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -145,6 +146,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.lerp
+import androidx.compose.ui.unit.coerceIn
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.music.bitchord.ui.components.ExplicitBadge
@@ -620,6 +622,59 @@ private fun tabletSizedPlayer(windowWidth: Dp): Boolean =
 fun landscapePlayerAvailable(windowWidth: Dp, windowHeight: Dp): Boolean =
     windowWidth > windowHeight && windowWidth >= LANDSCAPE_PLAYER_MIN_WIDTH
 
+/**
+ * The least a window has to be, across and down, before the player can stand
+ * beside the page instead of over it — see [playerPaneAvailable].
+ *
+ * 700dp across is [TABLET_PLAYER_MIN_WIDTH]: an unfolded foldable, a tablet,
+ * a desktop window. The height keeps a phone on its side out of it: that is
+ * wide enough, but a pane a third of the window across and 360dp tall holds
+ * no player worth having, and the landscape player is already its shape.
+ */
+private val PLAYER_PANE_MIN_WINDOW_HEIGHT = 480.dp
+/** The pane's share of the window, and the widths it is held between. */
+private const val PLAYER_PANE_FRACTION = 0.4f
+private val PLAYER_PANE_MIN_WIDTH = 340.dp
+private val PLAYER_PANE_MAX_WIDTH = 420.dp
+
+/**
+ * Whether the window is big enough to open the player as a pane down its
+ * right-hand edge, with the page still in use beside it, rather than as the
+ * full-screen take-over. The full-screen player is still there: the pane
+ * expands into it.
+ */
+fun playerPaneAvailable(windowWidth: Dp, windowHeight: Dp): Boolean =
+    tabletSizedPlayer(windowWidth) && windowHeight >= PLAYER_PANE_MIN_WINDOW_HEIGHT
+
+/**
+ * How wide that pane is. Always narrow enough to be a phone's player —
+ * [playerFillsWindow] of it holds — so the pane is the portrait player exactly
+ * as a phone draws it, and the page keeps at least 360dp of a 700dp window.
+ */
+fun playerPaneWidth(windowWidth: Dp): Dp =
+    (windowWidth * PLAYER_PANE_FRACTION).coerceIn(PLAYER_PANE_MIN_WIDTH, PLAYER_PANE_MAX_WIDTH)
+
+/**
+ * Set while the player is drawn as a pane beside the page rather than over it,
+ * and what the pane offers the player in return. A pane is a part of the
+ * window, not the window, so a player in one keeps its hands off what belongs
+ * to the whole of it:
+ *
+ * - Back. Over the page, back belongs to the player first: out of the lyrics
+ *   or the queue before out of the player. Beside it, the lyrics and the queue
+ *   are just what the pane happens to be showing while the page is browsed,
+ *   and a back press that closed them instead of going back a page would be
+ *   answering the wrong half of the screen.
+ * - The status bar, which runs over the page too: its icons stay the page's,
+ *   and the player's "hide the status bar" is the full-screen player's.
+ * - The screen's rotation. A music video's full-screen button turns a phone
+ *   on its side; in a pane it asks for the full-screen player, [expand].
+ */
+class PlayerPaneHost(val expand: () -> Unit)
+
+/** See [PlayerPaneHost]; null wherever the player has the window to itself. */
+val LocalPlayerPane = staticCompositionLocalOf<PlayerPaneHost?> { null }
+
 /** How long the player stands under the lyrics untouched before standing down. */
 private const val LYRICS_CONTROLS_IDLE_MS = 5_000L
 /** Default Spotify Canvas delay before its optional automatic collapse. */
@@ -885,11 +940,14 @@ fun NowPlayingScreen(
     // Media-player convention: the player always owns light status icons. The
     // top treatment below, rather than a window-flag flip per cover, provides
     // their contrast and stays visually stable through artwork transitions.
-    StatusBarIcons(dark = false)
+    //
+    // Not from a pane: see [PlayerPaneHost].
+    val pane = LocalPlayerPane.current
+    if (pane == null) StatusBarIcons(dark = false)
     // Composed only while the player is, so closing it brings the bar back.
     // The layout below reads [stableStatusBarInsets] and keeps its place.
     val hideStatusBar by PlayerSettings.hideStatusBar.collectAsStateWithLifecycle()
-    HideStatusBar(hideStatusBar)
+    HideStatusBar(hideStatusBar && pane == null)
 
     // Kept local to the player: a modal player is not in the page's Haze
     // source tree, so it needs its own source for the same frosted material as
@@ -1182,10 +1240,13 @@ fun NowPlayingScreen(
     // Controls being visible must not insert an extra navigation level. Back
     // always leaves lyrics in one step, whether it starts over the lyrics list
     // or over the half-player at the bottom.
-    PlayerBackHandler(enabled = lyricsOpen, onBack = closeLyrics)
+    //
+    // Not as a pane beside the page — see [PlayerPaneHost].
+    val besidePage = pane != null
+    PlayerBackHandler(enabled = lyricsOpen && !besidePage, onBack = closeLyrics)
 
     // Back out of the queue to the player.
-    PlayerBackHandler(enabled = queueOpen) { queueOpen = false }
+    PlayerBackHandler(enabled = queueOpen && !besidePage) { queueOpen = false }
 
     // Registered ahead of the pipeline dialog's own handler below: the
     // pipeline is now only ever opened from the row at the bottom of this
@@ -3596,8 +3657,12 @@ fun NowPlayingScreen(
                                     VideoCornerControls(
                                         fullscreen = false,
                                         onToggleFullscreen = {
-                                            fullscreenRequested = true
-                                            screenOrientation.landscape()
+                                            if (pane != null) {
+                                                pane.expand()
+                                            } else {
+                                                fullscreenRequested = true
+                                                screenOrientation.landscape()
+                                            }
                                         },
                                         onOpenQuality = { showVideoQuality = true },
                                         modifier = Modifier

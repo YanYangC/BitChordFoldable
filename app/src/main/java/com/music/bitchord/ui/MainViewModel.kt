@@ -914,6 +914,34 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Home's Local music row: the albums the device's own music groups into,
+     * the most recently added first — the same groupings, under the same page
+     * ids, as the Local Music folder's Albums tab, so a card opens the page
+     * that tab would. Empty without the storage permission: Home is no place
+     * to ask for it, and the Library's folder already does.
+     */
+    private val _homeLocalAlbums = MutableStateFlow<List<LocalGroup>>(emptyList())
+    val homeLocalAlbums: StateFlow<List<LocalGroup>> = _homeLocalAlbums.asStateFlow()
+
+    fun loadHomeLocalAlbums() {
+        viewModelScope.launch {
+            val context = getApplication<Application>()
+            if (!LocalMediaRepository.hasStoragePermission(context)) {
+                _homeLocalAlbums.value = emptyList()
+                return@launch
+            }
+            val songs = runCatching { LocalMediaRepository.getLocalMusic(context) }.getOrNull() ?: return@launch
+            _homeLocalAlbums.value = withContext(Dispatchers.Default) {
+                LocalGroups.albumsOf(LOCAL_MUSIC_FOLDER_ID, songs, emptyList())
+                    .sortedByDescending { album ->
+                        album.songs.maxOfOrNull { it.localDateAddedSeconds ?: Long.MIN_VALUE } ?: Long.MIN_VALUE
+                    }
+                    .take(HOME_LOCAL_ALBUMS_MAX)
+            }
+        }
+    }
+
     /** The account's own playlists, for the picker and the library tab. */
     private val _playlists = MutableStateFlow<List<UserPlaylist>>(emptyList())
     val playlists: StateFlow<List<UserPlaylist>> = _playlists.asStateFlow()
@@ -1460,6 +1488,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         startSuggestPipeline()
         startTypeaheadMediaPipeline()
         loadHome()
+        loadHomeLocalAlbums()
         // Explore waits for its tab (see [onExploreShown]): its category list
         // and the dozen-odd artwork browses after it went out at launch with
         // Home's own requests, to the same host, for a page not yet opened.
@@ -1607,7 +1636,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _refreshing.value = _refreshing.value + feed
         viewModelScope.launch {
             when (feed) {
-                Feed.HOME -> refreshHome(identity)
+                Feed.HOME -> {
+                    loadHomeLocalAlbums()
+                    refreshHome(identity)
+                }
                 Feed.EXPLORE -> fetchExplore()
                 Feed.LIBRARY -> fetchLibrary(identity)
             }
@@ -3637,3 +3669,9 @@ internal fun lyricsLookupKey(
     order: List<LyricsSource>,
     prioritizeSyllableSync: Boolean,
 ): List<Any> = listOf(videoId, sources, order, prioritizeSyllableSync)
+
+/** The Local Music device folder's page id — see [LocalGroups.albumPageId]. */
+const val LOCAL_MUSIC_FOLDER_ID = "local:all"
+
+/** How many albums Home's Local music row carries; Show all has the rest. */
+private const val HOME_LOCAL_ALBUMS_MAX = 20

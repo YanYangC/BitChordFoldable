@@ -107,6 +107,27 @@ private fun List<ShelfItem>.playingItemMatcher(song: Song?): (ShelfItem) -> Bool
     return { it == byName }
 }
 
+/**
+ * A row of the listener's own on Home — their playlists, the albums on the
+ * device — rather than one of the feed's. Placed near the top of the feed, see
+ * [pinnedShelvesAfter]; never paged, and never part of what a refresh fetches.
+ */
+data class HomePinnedShelf(
+    val shelf: HomeShelf,
+    /** Where Show all goes; null draws no Show all. */
+    val onShowAll: (() -> Unit)? = null,
+)
+
+/**
+ * Which of the feed's shelves the pinned rows follow: Albums & singles when the
+ * feed has one, the lead shelf otherwise, so they land near the top either way.
+ */
+private fun pinnedShelvesAfter(shelves: List<HomeShelf>): Int =
+    shelves.indexOfFirst { it.title.trim().equals(ALBUMS_AND_SINGLES_TITLE, ignoreCase = true) }
+        .takeIf { it >= 0 } ?: 0
+
+private const val ALBUMS_AND_SINGLES_TITLE = "Albums & singles"
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
@@ -158,7 +179,10 @@ fun HomeScreen(
     onMoodsShowAll: () -> Unit = {},
     /** Whether the Top Picks and mood artwork may animate — see [LocalArtworkMotion]. */
     artworkMotion: Boolean = true,
+    /** The listener's own rows — see [HomePinnedShelf]. Empty ones are not drawn. */
+    pinnedShelves: List<HomePinnedShelf> = emptyList(),
 ) {
+    val pinned = pinnedShelves.filter { it.shelf.items.isNotEmpty() }
     // Top Picks' pictures and motion wait for the feed — see LocalArtworkImages.
     val feedReady = state !is UiState.Loading
     CompositionLocalProvider(
@@ -223,8 +247,13 @@ fun HomeScreen(
                     }
                     feedSkeleton()
                 }
-                is UiState.Error -> item {
-                    MessageState(state.message, actionLabel = stringResource(Res.string.retry), onAction = onRetry)
+                is UiState.Error -> {
+                    // What is on the device is still there with the feed down —
+                    // offline is exactly when the local row is wanted.
+                    pinnedShelfItems(pinned, onItemClick, onItemLongPress, currentSong, isPlaying)
+                    item {
+                        MessageState(state.message, actionLabel = stringResource(Res.string.retry), onAction = onRetry)
+                    }
                 }
                 is UiState.Success -> {
                     if (recentlyPlayedLoading) {
@@ -232,6 +261,7 @@ fun HomeScreen(
                     }
                     itemsIndexedShelves(
                         shelves = state.data,
+                        pinned = pinned,
                         onMoodClick = onMoodClick,
                         onMoodsShowAll = onMoodsShowAll,
                         onItemClick = onItemClick,
@@ -271,6 +301,7 @@ fun HomeScreen(
 /** Recents mirrors the artist page's top-tracks pager; other shelves use square cards. */
 private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
     shelves: List<HomeShelf>,
+    pinned: List<HomePinnedShelf> = emptyList(),
     onItemClick: (ShelfItem, String) -> Unit,
     onItemLongPress: ((ShelfItem) -> Unit)?,
     currentSong: Song?,
@@ -278,6 +309,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
     onMoodClick: ((TopPickMood, String) -> Unit)? = null,
     onMoodsShowAll: () -> Unit = {},
 ) {
+    val pinnedAfter = pinnedShelvesAfter(shelves)
     shelves.forEachIndexed { index, shelf ->
         // Find Your Mood follows the lead shelf, as on Apple Music's Home.
         if (index == 1 && onMoodClick != null) {
@@ -306,6 +338,32 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
                     isPlaying = isPlaying,
                 )
             }
+        }
+        if (index == pinnedAfter) {
+            pinnedShelfItems(pinned, onItemClick, onItemLongPress, currentSong, isPlaying)
+        }
+    }
+    // A feed with no shelves at all still has the listener's own.
+    if (shelves.isEmpty()) pinnedShelfItems(pinned, onItemClick, onItemLongPress, currentSong, isPlaying)
+}
+
+private fun androidx.compose.foundation.lazy.LazyListScope.pinnedShelfItems(
+    pinned: List<HomePinnedShelf>,
+    onItemClick: (ShelfItem, String) -> Unit,
+    onItemLongPress: ((ShelfItem) -> Unit)?,
+    currentSong: Song?,
+    isPlaying: Boolean,
+) {
+    pinned.forEach { row ->
+        item(key = "pinned:" + row.shelf.title) {
+            Shelf(
+                shelf = row.shelf,
+                onItemClick = { item -> onItemClick(item, row.shelf.title) },
+                onItemLongPress = onItemLongPress,
+                currentSong = currentSong,
+                isPlaying = isPlaying,
+                onShowAll = row.onShowAll,
+            )
         }
     }
 }
@@ -737,9 +795,10 @@ internal fun Shelf(
     leadingCard: (@Composable () -> Unit)? = null,
     currentSong: Song? = null,
     isPlaying: Boolean = false,
+    onShowAll: (() -> Unit)? = null,
 ) {
     Column(Modifier.padding(bottom = 26.dp)) {
-        SectionHeader(shelf.title, shelf.subtitle)
+        SectionHeader(shelf.title, shelf.subtitle, onShowAll)
         val isCurrentItem = shelf.items.playingItemMatcher(currentSong)
         ShelfRow(
             contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
