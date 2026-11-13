@@ -92,6 +92,8 @@ import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Sort
 import androidx.compose.material.icons.rounded.Upgrade
 import com.music.bitchord.data.listentogether.ServerConnectionState
+import com.music.bitchord.ui.haptics.Haptic
+import com.music.bitchord.ui.haptics.rememberHaptics
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -167,6 +169,7 @@ import com.music.bitchord.data.model.UserPlaylist
 import com.music.bitchord.data.model.EntityType
 import com.music.bitchord.data.model.SearchHistoryEntity
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.scrobbling.LastFM
@@ -402,6 +405,9 @@ private const val TOP_FADE_START = 0.55f
 private const val TOP_FADE_RAMP = 0.3f
 
 private const val INITIAL_RADIO_TRACKS = 24
+
+/** Number of items above which we treat a list as "far" and do a bounded jump near the top. */
+private const val FAR_LIST_THRESHOLD = 15
 
 internal fun shouldSkipAfterDislike(
     previousStatus: LikeStatus,
@@ -4502,6 +4508,22 @@ private fun BitChordApp(
                 // their own, which keeps [BitChordApp] under the JVM's 64 KB
                 // limit on one method's bytecode — see [Isolated].
                 Isolated {
+                val haptics = rememberHaptics()
+                val scrollScope = rememberCoroutineScope()
+                var scrollJob by remember { mutableStateOf<Job?>(null) }
+                // A tap on the tab already selected: its list back to the top
+                // (not Search, whose tap focuses the field).
+                val onActiveTabTap: () -> Unit = fun() {
+                    // Capture overlay state at tap time, before any navigation handler clears it.
+                    if (route != null || detail != null || selectedMoodGenre != null) return
+                    if (selectedTab == TAB_SEARCH) return
+                    haptics.play(Haptic.Select)
+                    scrollJob?.cancel()
+                    scrollJob = scrollScope.launch {
+                        currentListState.scrollToTopEased()
+                    }
+                }
+
                 // The mini player, wherever it is drawn: over the tabs, or
                 // beside them on an unfolded screen.
                 val miniPlayer: @Composable (Song, Modifier, Dp?) -> Unit = { song, modifier, pillHeight ->
@@ -4570,6 +4592,7 @@ private fun BitChordApp(
                                     onPrevious = { controller?.seekToPrevious() },
                                     onExpand = openPlayer,
                                     modifier = Modifier.fillMaxWidth(),
+                                    onActiveTabTap = onActiveTabTap,
                                 )
                             } else {
                                 FloatingBottomBar(
@@ -4577,6 +4600,7 @@ private fun BitChordApp(
                                     selectedIndex = selectedTab,
                                     hazeState = hazeState,
                                     onTabSelected = onTabSelected,
+                                    onActiveTabTap = onActiveTabTap,
                                 )
                             }
                         }
@@ -4621,6 +4645,7 @@ private fun BitChordApp(
                         dock = activeDock,
                         pull = miniPlayerPull,
                         modifier = Modifier.fillMaxWidth(),
+                        onActiveTabTap = onActiveTabTap,
                     )
                 } else Column(
                     modifier = Modifier
@@ -4646,6 +4671,7 @@ private fun BitChordApp(
                         selectedIndex = selectedTab,
                         hazeState = hazeState,
                         onTabSelected = onTabSelected,
+                        onActiveTabTap = onActiveTabTap,
                     )
                 }
                 }
@@ -6928,4 +6954,15 @@ private fun SettingsListPane(
             ?: paneSection.takeIf { top == AppRoute.Settings }
         settingsPage(null, selected, onSelect)
     }
+}
+
+/**
+ * Back to the top of a tab's list, for a tap on the tab already selected. A
+ * long way down is first jumped to within [FAR_LIST_THRESHOLD] items of the
+ * top, so the animation covers a screen or two rather than the whole list.
+ */
+private suspend fun LazyListState.scrollToTopEased() {
+    if (firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0) return
+    if (firstVisibleItemIndex > FAR_LIST_THRESHOLD) scrollToItem(FAR_LIST_THRESHOLD)
+    animateScrollToItem(0)
 }
