@@ -484,6 +484,26 @@ object Downloads {
         }
     }
 
+    /**
+     * Track [song], just added to a downloaded playlist, and download it with the
+     * rest: appended to the record — the end is where YouTube files it — and
+     * queued. A no-op for a playlist that was never downloaded whole.
+     *
+     * Under "Keep playlists updated" ([AppSettings.syncDownloadedPlaylists]),
+     * the same promise [PlaylistSync] keeps every twelve hours: a song added
+     * here is on the device at once instead of at the next check, and the
+     * check still catches what was added anywhere else. Like any download it
+     * waits for Wi-Fi when "Wi-Fi only" says so.
+     */
+    fun autoDownload(context: Context, browseId: String, song: Song) {
+        if (!AppSettings.syncDownloadedPlaylists.value) return
+        val bare = browseId.removePrefix("VL")
+        val record = _collections.value.values
+            .firstOrNull { it.playlist && it.id.removePrefix("VL") == bare } ?: return
+        recordCollections { it + (record.id to record.copy(videoIds = (record.videoIds + song.videoId).distinct())) }
+        if (song.videoId !in _saved.value) enqueue(context, song, record.title)
+    }
+
     /** Replace a collection's remote artwork URL with its durable local copy. */
     fun rememberCollectionArtwork(id: String, thumbnailUrl: String) {
         recordCollections { current ->
