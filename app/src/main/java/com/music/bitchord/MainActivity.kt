@@ -19,6 +19,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedContent
+import android.view.WindowManager
+import com.music.bitchord.ui.theme.findWindow
 import com.music.bitchord.ui.components.NAV_BAR_LIFT
 import com.music.bitchord.ui.components.floatingBarInsets
 import com.music.bitchord.ui.screens.HomePinnedShelf
@@ -5143,6 +5145,7 @@ private fun BitChordApp(
         }
         // ---- Now Playing ----
         if (playerRaised) {
+            val keepScreenOn by AppSettings.keepScreenOn.collectAsStateWithLifecycle()
             // What rememberModalBottomSheetState builds, but able to start open,
             // and with every hide routed through [playerSheetMotion] — a drag
             // released low, a back press, a tap on the scrim. Refused here and
@@ -5215,6 +5218,7 @@ private fun BitChordApp(
                 // exit animation with the artwork still drawn in it.
                 properties = ModalBottomSheetProperties(shouldDismissOnBackPress = reducePlayerMotion),
             ) {
+                KeepPlayerScreenOn(keepScreenOn)
                 // With M3's own back off, the dialog's dispatcher ends here.
                 // Composed ahead of the player, so the player's own handlers —
                 // the lyrics and the queue putting themselves away first — are
@@ -6902,6 +6906,10 @@ private fun PlayerPane(
 ) {
     val collapseLabel = stringResource(R.string.player_pane_collapse)
     val expandLabel = stringResource(R.string.player_pane_expand)
+    // "Keep screen on" holds for the player beside the page as it does for the
+    // full-screen one.
+    val keepScreenOn by AppSettings.keepScreenOn.collectAsStateWithLifecycle()
+    KeepPlayerScreenOn(keepScreenOn && showPlayer)
     BoxWithConstraints(
         Modifier
             .width(width)
@@ -6965,4 +6973,23 @@ private suspend fun LazyListState.scrollToTopEased() {
     if (firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0) return
     if (firstVisibleItemIndex > FAR_LIST_THRESHOLD) scrollToItem(FAR_LIST_THRESHOLD)
     animateScrollToItem(0)
+}
+
+/**
+ * Settings → "Keep screen on", while the player is showing: on the window the
+ * player is drawn in (the sheet's own, or the activity's for the pane).
+ *
+ * A window flag rather than [android.view.View.keepScreenOn]: the player sets
+ * that one itself, on the same view, to keep the screen on while its lyrics are
+ * open — and clears it when they close, which would switch this setting off
+ * with it. The two are combined by the window, so neither undoes the other.
+ */
+@Composable
+private fun KeepPlayerScreenOn(enabled: Boolean) {
+    val view = LocalView.current
+    DisposableEffect(view, enabled) {
+        val window = if (enabled) findWindow(view) else null
+        window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose { window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+    }
 }
