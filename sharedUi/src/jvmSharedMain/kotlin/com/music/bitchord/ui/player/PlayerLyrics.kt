@@ -362,14 +362,21 @@ private val LINE_FALLOFF_ALPHA = floatArrayOf(1f, 0.8f, 0.7f, 0.58f, 0.46f)
 private val LINE_FALLOFF_BLUR = arrayOf(0.dp, 1.dp, 1.dp, 1.7.dp, 2.4.dp)
 
 /**
- * The same falloff for a phone, where the sung line is read from the top and
- * the whole stack lies below it. [LINE_FALLOFF_ALPHA] was set on a centred
+ * The same falloff for a phone, where the sung line is held above the middle
+ * (see [PHONE_FOCUS_FRACTION]) and most of the stack lies below it. [LINE_FALLOFF_ALPHA] was set on a centred
  * column with only a few rows either side; down a tall phone column it reads as
  * one flat brightness, so this keeps going for a row longer and steeper. Its
  * last entry is still a floor, not zero — the bottom of the screen stays
  * readable at a glance.
  */
 private val LINE_FALLOFF_ALPHA_PHONE = floatArrayOf(1f, 0.74f, 0.6f, 0.48f, 0.4f, 0.34f)
+
+/**
+ * How far down a phone's lyrics the line being sung is held: 40%, a little
+ * above the middle, so there is room above it for the lines just sung and
+ * more below it for what comes next. TV and the landscape player centre it.
+ */
+private const val PHONE_FOCUS_FRACTION = 0.4f
 
 /**
  * The shape of the page the lyrics are going to fill.
@@ -1938,18 +1945,31 @@ internal fun LyricsPanel(
     // every line while the reader's place in the song is unchanged, and a reset
     // here would snap the panel back to the top mid-read.
     var placed by remember(trackKey) { mutableStateOf(false) }
-    // Unsynced text has no line to hold anywhere, and centred it would only
-    // open with half a screen of nothing above the first verse.
-    val centered = centerFocus && isSynced
+    // How far down the viewport the line being sung is held: the middle where
+    // the panel is asked to centre it (TV, the landscape player), and a little
+    // above that on a phone — [PHONE_FOCUS_FRACTION] — with the lines already
+    // sung above it, falling away as the ones to come do below.
+    //
+    // Unsynced text has no line to hold anywhere, and held down the screen it
+    // would only open with a stretch of nothing above the first verse: it
+    // reads from the top.
+    val focusFraction = when {
+        !isSynced -> null
+        centerFocus -> 0.5f
+        else -> PHONE_FOCUS_FRACTION
+    }
+    val centered = focusFraction != null
     // Where a row [size] tall has to sit, in the list's own item offsets, to be
     // the line being read: its top on the top padding, or its middle on the
-    // middle of the viewport.
+    // focus point [focusFraction] of the way down the viewport.
     val focusOffset: (Int) -> Int = { size ->
-        if (!centered) {
+        if (focusFraction == null) {
             0
         } else {
             val info = listState.layoutInfo
-            (info.viewportStartOffset + info.viewportEndOffset) / 2 - size / 2
+            info.viewportStartOffset +
+                ((info.viewportEndOffset - info.viewportStartOffset) * focusFraction).toInt() -
+                size / 2
         }
     }
     // Nothing resets [browsing] off [controlsOpen] any more. It used to, so
@@ -2056,11 +2076,11 @@ internal fun LyricsPanel(
         // Each row carries GLOW_ROOM of its own inset for the halo, so the
         // list hands that much back — otherwise the lines would sit a glow's
         // width further apart and further in than they used to.
-        // Centred, half the viewport above the first line, so that it too can
-        // be brought to the middle.
+        // Held down the viewport, that much of it above the first line, so
+        // that it too can be brought to the focus point.
         contentPadding = PaddingValues(
-            top = if (centered) {
-                with(LocalDensity.current) { viewportHeight.toDp() } * 0.5f
+            top = if (focusFraction != null) {
+                with(LocalDensity.current) { viewportHeight.toDp() } * focusFraction
             } else {
                 40.dp - GLOW_ROOM
             },
