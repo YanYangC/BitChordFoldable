@@ -6721,10 +6721,35 @@ class PlaybackService : MediaLibraryService() {
         scope.launch {
             SleepTimer.deadline.collectLatest { deadline ->
                 if (deadline == null) return@collectLatest
-                val remaining = deadline - SystemClock.elapsedRealtime()
-                if (remaining > 0) delay(remaining)
-                player?.pause()
-                SleepTimer.cancel()
+                // Only a fade this timer started gives the volume back: the
+                // crossfade drives the same players' volume, and a reset here
+                // whenever a timer is cleared would cut into a transition.
+                var faded = false
+                try {
+                    val fadeDurationMs = if (AppSettings.sleepTimerFadeOut.value) SleepTimer.FADE_OUT_DURATION_MS else 0L
+                    val totalRemaining = deadline - SystemClock.elapsedRealtime()
+                    val waitBeforeFade = (totalRemaining - fadeDurationMs).coerceAtLeast(0L)
+                    if (waitBeforeFade > 0) delay(waitBeforeFade)
+
+                    val remainingBeforeFade = deadline - SystemClock.elapsedRealtime()
+                    if (fadeDurationMs > 0 && remainingBeforeFade > 0) {
+                        faded = true
+                        val fadeStart = SystemClock.elapsedRealtime()
+                        val actualDuration = remainingBeforeFade.coerceAtMost(fadeDurationMs)
+                        while (true) {
+                            val elapsed = SystemClock.elapsedRealtime() - fadeStart
+                            val remaining = (actualDuration - elapsed).coerceAtLeast(0L)
+                            player?.volume = SleepTimer.calculateFadeVolume(remaining, actualDuration, true)
+                            if (elapsed >= actualDuration) break
+                            delay(100L)
+                        }
+                    }
+
+                    player?.pause()
+                    SleepTimer.cancel()
+                } finally {
+                    if (faded) player?.volume = 1f
+                }
             }
         }
     }
