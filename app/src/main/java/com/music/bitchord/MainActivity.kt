@@ -201,6 +201,9 @@ import com.music.bitchord.ui.screens.ListenTogetherScreen
 import com.music.bitchord.ui.screens.PartyServerEditor
 import com.music.bitchord.ui.screens.SignatureApiEditor
 import com.music.bitchord.ui.screens.SettingsScreen
+import com.music.bitchord.ui.screens.SettingsCategory
+import androidx.compose.runtime.DontMemoize
+import androidx.compose.ui.unit.coerceIn
 import com.music.bitchord.ui.screens.SourceEditorAlert
 import com.music.bitchord.ui.screens.SourcesScreen
 import com.music.bitchord.data.sources.TrackMatcher
@@ -2977,12 +2980,113 @@ private fun BitChordApp(
         // Everything a page's menu floats over, and so what [pageBackdrop]
         // takes its still of; the menus themselves are drawn outside it. On the
         // window's background, which the pages don't paint: see `paintBackdrop`.
+        // ---- Settings, two panes ----
+        // On a page wide enough — an unfolded foldable, a tablet — Settings is a
+        // list down the left and a page on the right, as the system's own
+        // Settings is there: the list stays put, and whatever is opened from it
+        // (a category, a choice, the equalizer…) opens beside it rather than
+        // over it. Measured off the page rather than the window, so with the
+        // player's pane open beside it the page goes back to one column instead
+        // of squeezing two into what is left.
+        val settingsPageWidth = windowWidth - if (playerPaneShown) playerPaneWidth(windowWidth) else 0.dp
+        val settingsTwoPane = settingsPageWidth >= SETTINGS_TWO_PANE_MIN_WIDTH &&
+            visibleEntry != null && navigator.entries.any { it.route == AppRoute.Settings }
+        // The category the right pane shows while Settings itself is on top.
+        var settingsPaneSection by rememberSaveable { mutableStateOf(SettingsCategory.entries.first()) }
+        // The one Settings screen, wherever it is drawn: a page of its own, or
+        // either pane of the two.
+        //
+        // Not memoized: remembering it would check each of the couple of dozen
+        // values it closes over on every pass, in a function that is already at
+        // the JVM's 64 KB method limit. Building it fresh is a single allocation.
+        val settingsPage: @Composable (SettingsCategory?, SettingsCategory?, (SettingsCategory) -> Unit) -> Unit =
+            @DontMemoize { section, selectedSection, onOpenSection ->
+                SettingsScreen(
+                    section = section,
+                    selectedSection = selectedSection,
+                    onOpenSection = onOpenSection,
+                    onOpenChoice = { navigator.push(AppRoute.SettingsChoice(it)) },
+                    windowWidth = windowWidth,
+                    signedIn = signedIn,
+                    account = account,
+                    onSignIn = {
+                        navigator.clear()
+                        webSession = WebSessionMode.SIGN_IN
+                    },
+                    onSignOut = { viewModel.signOut() },
+                    onAccountScrobbling = { navigator.push(AppRoute.AccountScrobbling) },
+                    onEqualizer = { navigator.push(AppRoute.Equalizer) },
+                    onOpenReplay = {
+                        replayLandingPage = ReplayStoryPage.INTRO
+                        navigator.push(AppRoute.Replay)
+                    },
+                    onLyricsSources = { showLyricsSources = true },
+                    onTranslationLanguage = { showTranslationLanguage = true },
+                    onSources = { navigator.push(AppRoute.Sources) },
+                    onListenTogether = { navigator.push(AppRoute.ListenTogether) },
+                    onWearOs = { navigator.push(AppRoute.WearOs) },
+                    onSpotifyCanvasAuth = { showSpotifyCanvasAuth = true },
+                    onAppLanguage = { showAppLanguage = true },
+                    onEditSignatureApi = { editingSignatureApi = true },
+                    onConfirmBitPerfect = { confirmBitPerfect = it },
+                    onConfirmFixedVolume = { confirmFixedVolume = true },
+                    contentPadding = listPadding,
+                )
+            }
+
         Row(
             Modifier
                 .fillMaxSize()
                 .snapshotBackdropSource(pageBackdrop, floor = MaterialTheme.colorScheme.background),
         ) {
             Box(Modifier.weight(1f).fillMaxHeight()) {
+                // The page, and on a wide page Settings' list beside it. One
+                // surface for the bars' blur and glass to sample and for every
+                // scroll to fold the glass bar from, so they were moved out
+                // here from the page alone.
+                Row(
+                    Modifier
+                        .fillMaxSize()
+                        .hazeSource(hazeState)
+                        .then(
+                            if (glassActive) {
+                                Modifier
+                                    // Not under "reduce dynamic blur": nothing
+                                    // samples the layer then, and recording a
+                                    // whole page into one for no reader is the
+                                    // cost that setting exists to remove.
+                                    .then(
+                                        if (glassSamplesBackdrop) {
+                                            Modifier.layerBackdrop(appBackdrop)
+                                        } else {
+                                            Modifier
+                                        },
+                                    )
+                                    // Every page's scroll passes through here, so
+                                    // the glass bar collapses on all of them
+                                    // without each one having to know about it.
+                                    .nestedScroll(navBarScroll)
+                            } else {
+                                Modifier
+                            },
+                        ),
+                ) {
+                if (settingsTwoPane) {
+                    // The list. Outside the page switcher, so it holds still
+                    // while the pane beside it changes. Choosing a category
+                    // closes whatever was opened over Settings and shows that
+                    // category instead.
+                    SettingsListPane(
+                        pageWidth = settingsPageWidth,
+                        top = visibleEntry?.route,
+                        paneSection = settingsPaneSection,
+                        onSelect = @DontMemoize { category ->
+                            while (navigator.visibleRoute() != AppRoute.Settings && navigator.pop()) Unit
+                            settingsPaneSection = category
+                        },
+                        settingsPage = settingsPage,
+                    )
+                }
                 AnimatedContent(
                     // Whatever is on top of the back stack — see [AppNavigator].
                     targetState = when {
@@ -3027,30 +3131,7 @@ private fun BitChordApp(
                             fadeIn(tween(180)) togetherWith fadeOut(tween(180))
                         }
                     },
-                    modifier = Modifier
-                        .hazeSource(hazeState)
-                        .then(
-                            if (glassActive) {
-                                Modifier
-                                    // Not under "reduce dynamic blur": nothing
-                                    // samples the layer then, and recording a
-                                    // whole page into one for no reader is the
-                                    // cost that setting exists to remove.
-                                    .then(
-                                        if (glassSamplesBackdrop) {
-                                            Modifier.layerBackdrop(appBackdrop)
-                                        } else {
-                                            Modifier
-                                        },
-                                    )
-                                    // Every page's scroll passes through here, so
-                                    // the glass bar collapses on all of them
-                                    // without each one having to know about it.
-                                    .nestedScroll(navBarScroll)
-                            } else {
-                                Modifier
-                            },
-                        ),
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
                     label = "content",
                 ) { destination ->
                     // Every branch below reads `destination` rather than the
@@ -3244,36 +3325,13 @@ private fun BitChordApp(
                         } else if (pageRoute == AppRoute.Settings || pageRoute is AppRoute.SettingsSection) {
                             // The main page and every category's page are the
                             // one screen, each showing its own share of the rows.
-                            SettingsScreen(
-                                section = (pageRoute as? AppRoute.SettingsSection)?.category,
-                                onOpenSection = { navigator.push(AppRoute.SettingsSection(it)) },
-                                onOpenChoice = { navigator.push(AppRoute.SettingsChoice(it)) },
-                                windowWidth = windowWidth,
-                                signedIn = signedIn,
-                                account = account,
-                                onSignIn = {
-                                    navigator.clear()
-                                    webSession = WebSessionMode.SIGN_IN
-                                },
-                                onSignOut = { viewModel.signOut() },
-                                onAccountScrobbling = { navigator.push(AppRoute.AccountScrobbling) },
-                                onEqualizer = { navigator.push(AppRoute.Equalizer) },
-                                onOpenReplay = {
-                                    replayLandingPage = ReplayStoryPage.INTRO
-                                    navigator.push(AppRoute.Replay)
-                                },
-                                onLyricsSources = { showLyricsSources = true },
-                                onTranslationLanguage = { showTranslationLanguage = true },
-                                onSources = { navigator.push(AppRoute.Sources) },
-                                onListenTogether = { navigator.push(AppRoute.ListenTogether) },
-                                onWearOs = { navigator.push(AppRoute.WearOs) },
-                                onSpotifyCanvasAuth = { showSpotifyCanvasAuth = true },
-                                onAppLanguage = { showAppLanguage = true },
-                                onEditSignatureApi = { editingSignatureApi = true },
-                                onConfirmBitPerfect = { confirmBitPerfect = it },
-                                onConfirmFixedVolume = { confirmFixedVolume = true },
-                                contentPadding = listPadding,
-                            )
+                            // On two panes the list is already on the left, so
+                            // Settings itself is the category chosen there.
+                            settingsPage(
+                                (pageRoute as? AppRoute.SettingsSection)?.category
+                                    ?: settingsPaneSection.takeIf { settingsTwoPane },
+                                null,
+                            ) { navigator.push(AppRoute.SettingsSection(it)) }
                         } else if (page != null) {
                             // Local Music, Downloads and the other device folders are
                             // this same release page: the header any playlist has, then
@@ -3851,6 +3909,7 @@ private fun BitChordApp(
                         }
                     }
                 }
+                }
 
                 // The top-bar footprint is transparent on every page so the
                 // shared app-level gradient is continuous; its controls float
@@ -4297,6 +4356,10 @@ private fun BitChordApp(
                     }
                 }
 
+                // The bars, in a scope of their own: compiled into a method of
+                // their own, which keeps [BitChordApp] under the JVM's 64 KB
+                // limit on one method's bytecode — see [Isolated].
+                Isolated {
                 // The mini player, wherever it is drawn: over the tabs, or
                 // beside them on an unfolded screen.
                 val miniPlayer: @Composable (Song, Modifier, Dp?) -> Unit = { song, modifier, pillHeight ->
@@ -4442,6 +4505,7 @@ private fun BitChordApp(
                         hazeState = hazeState,
                         onTabSelected = onTabSelected,
                     )
+                }
                 }
             }
 
@@ -6568,5 +6632,40 @@ private fun PlayerPaneButton(icon: ImageVector, label: String, onClick: () -> Un
         contentAlignment = Alignment.Center,
     ) {
         Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(20.dp))
+    }
+}
+
+/** The page width from which Settings is a list and a page side by side. */
+private val SETTINGS_TWO_PANE_MIN_WIDTH = 600.dp
+/** The list's share of the page on two panes, and the widths it is held between. */
+private const val SETTINGS_LIST_PANE_FRACTION = 0.38f
+private val SETTINGS_LIST_PANE_MIN_WIDTH = 280.dp
+private val SETTINGS_LIST_PANE_MAX_WIDTH = 420.dp
+
+/**
+ * Settings' list as the left pane of its two — see `settingsTwoPane` in
+ * [BitChordApp]. Marks the category the right pane is showing: the one pushed
+ * as a page of its own, or with Settings itself on top, the one chosen here.
+ * Anything else opened over Settings (a choice, the equalizer…) marks none.
+ */
+@Composable
+private fun SettingsListPane(
+    pageWidth: Dp,
+    top: AppRoute?,
+    paneSection: SettingsCategory,
+    onSelect: (SettingsCategory) -> Unit,
+    settingsPage: @Composable (SettingsCategory?, SettingsCategory?, (SettingsCategory) -> Unit) -> Unit,
+) {
+    Box(
+        Modifier
+            .width(
+                (pageWidth * SETTINGS_LIST_PANE_FRACTION)
+                    .coerceIn(SETTINGS_LIST_PANE_MIN_WIDTH, SETTINGS_LIST_PANE_MAX_WIDTH),
+            )
+            .fillMaxHeight(),
+    ) {
+        val selected = (top as? AppRoute.SettingsSection)?.category
+            ?: paneSection.takeIf { top == AppRoute.Settings }
+        settingsPage(null, selected, onSelect)
     }
 }

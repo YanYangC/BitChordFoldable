@@ -223,6 +223,12 @@ fun SettingsScreen(
     onOpenSection: (SettingsCategory) -> Unit = {},
     /** Opens a choice with more options than its row can show, as a page. */
     onOpenChoice: (SettingsChoiceKind) -> Unit = {},
+    /**
+     * The category open beside this list, when the list is the left pane of a
+     * two-pane Settings on a wide window: its row is marked so the list says
+     * which page the right pane is. Null marks none, as on a phone.
+     */
+    selectedSection: SettingsCategory? = null,
 ) {
     val context = LocalContext.current
 
@@ -592,7 +598,7 @@ fun SettingsScreen(
             // The categories, each a page of its own — until there is a query,
             // when their rows answer here instead (below).
             if (!searching) {
-                SettingsCategoryList(onOpen = onOpenSection)
+                SettingsCategoryList(onOpen = onOpenSection, selected = selectedSection)
                 if (watchAvailable) {
                     SettingsGroup {
                         WearOsSettingsRow(onClick = onWearOs)
@@ -2556,10 +2562,19 @@ internal fun SettingsRow(
     iconContent: (@Composable () -> Unit)? = null,
     onClick: (() -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
+    /** The row whose page is open beside the list — see [SettingsScreen]'s selectedSection. */
+    selected: Boolean = false,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .then(
+                if (selected) {
+                    Modifier.background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                } else {
+                    Modifier
+                },
+            )
             .then(if (onClick != null && enabled) Modifier.clickable(onClick = onClick) else Modifier)
             .alpha(if (enabled) 1f else 0.45f)
             .heightIn(min = 52.dp)
@@ -2857,7 +2872,7 @@ enum class SettingsChoiceKind(@param:StringRes val title: Int) {
 
 /** The main page's list of categories: a glyph and a name each, and a chevron into it. */
 @Composable
-private fun SettingsCategoryList(onOpen: (SettingsCategory) -> Unit) {
+private fun SettingsCategoryList(onOpen: (SettingsCategory) -> Unit, selected: SettingsCategory? = null) {
     SettingsGroup {
         SettingsCategory.entries.forEachIndexed { index, category ->
             if (index > 0) RowDivider()
@@ -2865,6 +2880,7 @@ private fun SettingsCategoryList(onOpen: (SettingsCategory) -> Unit) {
                 icon = category.icon,
                 title = stringResource(category.title),
                 onClick = { onOpen(category) },
+                selected = category == selected,
             )
         }
     }
