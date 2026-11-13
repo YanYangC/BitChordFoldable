@@ -272,6 +272,7 @@ import com.music.bitchord.ui.components.InfoAlert
 import com.music.bitchord.ui.components.DownloadManagerPage
 import com.music.bitchord.ui.components.PlaylistPickerSheet
 import com.music.bitchord.ui.components.QueuePlaylistPicker
+import com.music.bitchord.ui.components.SongSelectionActions
 import com.music.bitchord.ui.components.ReorderPlaylistPage
 import com.music.bitchord.ui.components.LongPressOrigin
 import com.music.bitchord.ui.components.MenuAnchor
@@ -851,6 +852,10 @@ private fun BitChordApp(
     var albumPlaylistTarget by remember { mutableStateOf<BrowseTarget?>(null) }
     var queuePlaylistSongs by remember { mutableStateOf<List<Song>?>(null) }
     var queuePlaylistCompletion by remember { mutableStateOf<CompletableDeferred<Boolean>?>(null) }
+    // The picker for several songs picked on a playlist or album page (see
+    // [SongSelection]); the queue's own multi-pick uses the same one.
+    var playlistTargets by remember { mutableStateOf<List<Song>?>(null) }
+    val songSelection by viewModel.selection.collectAsStateWithLifecycle()
     // The picker opened from the Library tab, where there is no track and
     // creating the playlist is the whole errand.
     var creatingPlaylist by remember { mutableStateOf(false) }
@@ -3135,6 +3140,8 @@ private fun BitChordApp(
         // With nothing left to go back through, back puts the pane away before
         // it hands the app to the system — the pane is the last thing opened.
         BackHandler(enabled = !canGoBack && playerPaneShown) { playerPaneOpen = false }
+        // Picking songs: Back lets go of them before it leaves the page.
+        BackHandler(enabled = songSelection != null) { viewModel.clearSelection() }
         // Replay's stories and its share sheet are drawn over everything, and
         // unwind in the order they were opened. Only while there is a summary
         // to draw them from — otherwise back would spend a step closing
@@ -3776,6 +3783,33 @@ private fun BitChordApp(
                                 songSort = songSort,
                                 folder = folder,
                                 contentPadding = listPadding,
+                                selection = songSelection?.takeIf { it.browseId == page.browseId },
+                                selectionActions = SongSelectionActions(
+                                    onToggle = viewModel::toggleSelected,
+                                    onSelectAll = { songs -> viewModel.selectAll(page.browseId, songs) },
+                                    onPlayNext = { songs -> playSongsNext(songs); viewModel.clearSelection() },
+                                    onAddToQueue = { songs -> addSongsToQueue(songs); viewModel.clearSelection() },
+                                    onAddToPlaylist = if (signedIn) {
+                                        { songs ->
+                                            viewModel.loadPlaylists()
+                                            playlistTargets = songs
+                                        }
+                                    } else {
+                                        null
+                                    },
+                                    // Only on a playlist this account owns, and only rows it can name.
+                                    onRemove = viewModel.editablePlaylist(page.browseId)?.let { owned ->
+                                        { songs ->
+                                            viewModel.removeFromPlaylist(owned.browseId, songs) { ok ->
+                                                showQueueNotice(
+                                                    context.getString(if (ok) R.string.removed_from_playlist_notice else R.string.failed),
+                                                )
+                                            }
+                                            viewModel.clearSelection()
+                                        }
+                                    },
+                                    onDone = viewModel::clearSelection,
+                                ),
                                 reorder = if (reordering != null) {
                                     { palette ->
                                         ReorderPlaylistPage(
@@ -5120,6 +5154,15 @@ private fun BitChordApp(
                 } else {
                     null
                 },
+                // From a playlist or album page's own rows: pick this one and more.
+                onSelect = detail
+                    ?.takeIf { !fromPlayer && it.songs is UiState.Success && !it.browseId.isDeviceFolder() }
+                    ?.let { page ->
+                        {
+                            songActions = null
+                            viewModel.startSelection(page.browseId, song)
+                        }
+                    },
                 onRemoveFromHistory = song.feedbackToken?.takeIf { menuFromHistory }?.let { token ->
                     {
                         songActions = null
@@ -5561,6 +5604,20 @@ private fun BitChordApp(
         // One sheet for both, because they are one decision: the list of
         // playlists with a way to make another. `creatingPlaylist` opens it
         // straight onto the form, which is what the Library tile means.
+        playlistTargets?.let { targets ->
+            key(targets) {
+                QueuePlaylistPicker(
+                    songs = targets,
+                    viewModel = viewModel,
+                    onNotice = { message -> showQueueNotice(message) },
+                    onComplete = {
+                        playlistTargets = null
+                        viewModel.clearSelection()
+                    },
+                    onDismiss = { playlistTargets = null },
+                )
+            }
+        }
         if (playlistTarget != null || creatingPlaylist) {
             val target = playlistTarget
             val dismiss = {

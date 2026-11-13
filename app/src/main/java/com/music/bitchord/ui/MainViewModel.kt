@@ -633,6 +633,55 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _detailStack = MutableStateFlow<List<DetailPage>>(emptyList())
     val detailStack: StateFlow<List<DetailPage>> = _detailStack.asStateFlow()
 
+    private val _selection = MutableStateFlow<SongSelection?>(null)
+    /** Songs picked on the open playlist or album page; null while not picking. */
+    val selection: StateFlow<SongSelection?> = _selection.asStateFlow()
+
+    /** Starts picking on [browseId]'s page, with [song] picked when it came from that song's menu. */
+    fun startSelection(browseId: String, song: Song? = null) {
+        _selection.value = SongSelection(browseId, setOfNotNull(song?.videoId))
+    }
+
+    fun toggleSelected(song: Song) {
+        _selection.value = _selection.value?.toggled(song)
+    }
+
+    fun selectAll(browseId: String, songs: List<Song>) {
+        _selection.value = (_selection.value ?: SongSelection(browseId)).withAll(songs)
+    }
+
+    fun clearSelection() {
+        _selection.value = null
+    }
+
+    /**
+     * Remove from Playlist for every picked song at once: one request for all
+     * of them (several edits at once, YouTube refuses some), then off the open
+     * page straight away, as [removeFromPlaylist] does for one.
+     */
+    fun removeFromPlaylist(browseId: String, songs: List<Song>, onResult: (Boolean) -> Unit = {}) {
+        val entries = songs.mapNotNull { song -> song.setVideoId?.let { it to song.videoId } }
+        if (entries.isEmpty() || !requireSignIn()) return onResult(false)
+        val removed = entries.mapTo(HashSet()) { it.first }
+        viewModelScope.launch {
+            YtMusicRepository.removeFromPlaylist(browseId.removePrefix("VL"), entries).fold(
+                onSuccess = {
+                    libraryStale = true
+                    _detailStack.value = _detailStack.value.map { page ->
+                        val current = (page.songs as? UiState.Success)?.data
+                        if (page.browseId != browseId || current == null) {
+                            page
+                        } else {
+                            page.copy(songs = UiState.Success(current.filterNot { it.setVideoId in removed }))
+                        }
+                    }
+                    onResult(true)
+                },
+                onFailure = { onResult(false) },
+            )
+        }
+    }
+
     /**
      * The app's back stack: the routes pushed over the tabs, interleaved with
      * [detailStack]. Held here so it survives a configuration change along
