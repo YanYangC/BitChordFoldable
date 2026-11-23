@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -113,13 +114,10 @@ fun PlaylistPickerSheet(
     onCreate: (String, PlaylistPrivacy) -> Unit,
     onDismiss: () -> Unit,
     song: Song? = null,
-    songs: List<Song>? = null,
-    defaultTitle: String? = null,
     startCreating: Boolean = false,
     offline: Boolean = false,
     headerTitle: String? = null,
-    /** Several picked songs going in at once: the header counts them instead of showing [song]. */
-    songCount: Int = 1,
+    songs: List<Song> = emptyList(),
 ) {
     var creating by remember { mutableStateOf(startCreating) }
     // By id rather than by value: the list is re-fetched under an open sheet,
@@ -128,6 +126,11 @@ fun PlaylistPickerSheet(
     // Find a playlist: narrows the list as it's typed. Ticks on playlists it
     // hides are kept, so a search can't quietly drop one already chosen.
     var query by remember { mutableStateOf("") }
+    // A keyed list holds on to the row it was showing, so narrowing or clearing
+    // the search left the list wherever that row now sits — mid-way down the
+    // full list after a clear. Each new query starts the list from its top.
+    val listState = rememberLazyListState()
+    LaunchedEffect(query) { listState.scrollToItem(0) }
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
@@ -172,7 +175,6 @@ fun PlaylistPickerSheet(
                     onClose = { closeAfter {} },
                     onCreate = { name, privacy -> closeAfter { onCreate(name, privacy) } },
                     offline = offline,
-                    initialTitle = defaultTitle ?: "",
                 )
             } else {
                 SheetTopBar(
@@ -187,23 +189,20 @@ fun PlaylistPickerSheet(
                     confirmEnabled = selected.isNotEmpty(),
                     onConfirm = { closeAfter { onAdd(playlists.filter { it.playlistId in selected }) } },
                 )
-                if (song != null && songCount > 1) {
+                if (songs.isNotEmpty()) {
                     Text(
-                        text = pluralStringResource(R.plurals.picked_songs_count, songCount, songCount),
+                        text = stringResource(R.string.queue_selected_count, songs.size),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onBackground,
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+                        modifier = Modifier.padding(horizontal = 22.dp, vertical = 16.dp),
                     )
                     HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
                 } else if (song != null) {
                     SheetTrackHeader(song, title = headerTitle)
                     HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
-                } else if (!songs.isNullOrEmpty()) {
-                    SheetSongsHeader(songs = songs, defaultTitle = defaultTitle)
-                    HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
                 }
                 SheetHeading(
-                    stringResource(if (song != null || !songs.isNullOrEmpty()) R.string.add_to_playlist else R.string.your_playlists)
+                    stringResource(if (song != null || songs.isNotEmpty()) R.string.add_to_playlist else R.string.your_playlists)
                         .uppercase(Locale.getDefault()),
                 )
 
@@ -248,6 +247,7 @@ fun PlaylistPickerSheet(
                             )
                         }
                         LazyColumn(
+                            state = listState,
                             modifier = Modifier.weight(1f),
                             contentPadding = WindowInsets.navigationBars.asPaddingValues(),
                         ) {
@@ -418,10 +418,8 @@ private fun NewPlaylistForm(
     onClose: () -> Unit,
     onCreate: (String, PlaylistPrivacy) -> Unit,
     offline: Boolean,
-    modifier: Modifier = Modifier,
-    initialTitle: String = "",
 ) {
-    var name by remember { mutableStateOf(initialTitle) }
+    var name by remember { mutableStateOf("") }
     var privacy by remember { mutableStateOf(PlaylistPrivacy.PRIVATE) }
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
@@ -683,45 +681,3 @@ private fun PrivacyPill(
         )
     }
 }
-
-@Composable
-private fun SheetSongsHeader(
-    songs: List<Song>,
-    defaultTitle: String?,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        AsyncImage(
-            model = songs.firstOrNull()?.artworkAt(ROW_ART_PX),
-            contentDescription = null,
-            modifier = Modifier
-                .size(52.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .thumbnailBorder(RoundedCornerShape(8.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-        )
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = defaultTitle ?: stringResource(R.string.save_queue_as_playlist),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onBackground,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = pluralStringResource(R.plurals.song_count_plural, songs.size, songs.size),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-

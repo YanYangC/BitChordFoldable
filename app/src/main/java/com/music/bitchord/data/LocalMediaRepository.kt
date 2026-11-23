@@ -523,6 +523,7 @@ object LocalMediaRepository {
         var albumName: String? = null
         var durationText: String? = null
         var trackNumber: Int? = null
+        var embeddedArt: String? = null
         var discNumber: Int? = null
 
         runCatching {
@@ -541,6 +542,12 @@ object LocalMediaRepository {
                 albumName = metaAlbum.cleanTag()
                 if (metaDur != null && metaDur > 0) durationText = formatDuration(metaDur)
                 trackNumber = trackNumberFromTag(metaTrack)
+                // The cover is in the file; nothing else will say so for a file
+                // MediaStore doesn't index. Media3 reads it for the notification,
+                // and only this makes the player show it too (#1352).
+                if (scanned?.artworkUrl == null) {
+                    embeddedArt = cachedEmbeddedArt(File(context.cacheDir, EMBEDDED_ART_DIR), uriStr, retriever.embeddedPicture)
+                }
                 discNumber = trackNumberFromTag(metaDisc)
             } finally {
                 retriever.release()
@@ -551,7 +558,7 @@ object LocalMediaRepository {
             videoId = uriStr,
             title = title,
             artist = artist,
-            thumbnailUrl = scanned?.artworkUrl,
+            thumbnailUrl = scanned?.artworkUrl ?: embeddedArt,
             durationText = durationText,
             albumName = albumName ?: scanned?.albumName,
             localUri = uriStr,
@@ -576,6 +583,26 @@ object LocalMediaRepository {
     /** The disc half of that same int: 2001 is disc 2. Null when no disc was packed in. */
     internal fun discNumberFromMediaStore(raw: Int?): Int? =
         raw?.takeIf { it >= 1000 && it % 1000 in 1..999 }?.div(1000)
+
+    /**
+     * [picture] kept as a file under [dir], one per source [key], for Coil to
+     * load like any other cover. Null when there is no picture, or it can't be
+     * written. Written once: the same file opened again reuses it.
+     *
+     * ponytail: lives in the cache, so Android may clear it; a like or playlist
+     * entry saved from here then shows no cover until the file is opened again.
+     */
+    internal fun cachedEmbeddedArt(dir: File, key: String, picture: ByteArray?): String? {
+        if (picture == null || picture.isEmpty()) return null
+        return runCatching {
+            dir.mkdirs()
+            val file = File(dir, "${key.hashCode().toUInt()}-${picture.size}.img")
+            if (!file.exists()) file.writeBytes(picture)
+            "file://${file.absolutePath}"
+        }.getOrNull()
+    }
+
+    private const val EMBEDDED_ART_DIR = "embedded_art"
 
     /**
      * `CD_TRACK_NUMBER` arrives as `"3"` or `"3/12"`. Takes the head; null when
