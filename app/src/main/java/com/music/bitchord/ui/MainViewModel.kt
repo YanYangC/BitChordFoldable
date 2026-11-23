@@ -1148,6 +1148,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             addedCount += chunk.size
                             chunk.forEach { song ->
                                 appendToOpenPlaylist(playlist.browseId, song, returned[song.videoId])
+                                Downloads.autoDownload(getApplication(), playlist.browseId, song)
                             }
                         },
                         onFailure = { failedCount += chunk.size },
